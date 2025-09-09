@@ -54,12 +54,7 @@ def main():
                 else:
                     print(f"⚠️  Could not get info for table: {table}")
             
-            # Migrate legacy timestamps if needed
-            print("\n🔄 Migrating legacy timestamp columns...")
-            if schema.migrate_legacy_timestamps():
-                print("✅ Timestamp migration completed")
-            else:
-                print("⚠️  Timestamp migration failed (this may be normal for new installations)")
+            # Note: Legacy timestamp migration removed as it's not needed for new installations
             
             print("\n🎉 Database setup completed successfully!")
             return True

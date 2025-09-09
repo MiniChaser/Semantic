@@ -47,7 +47,7 @@ class DatabaseSchema:
             booktitle TEXT,
             doi VARCHAR(100),
             create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            update_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            update_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
         """
     
@@ -61,7 +61,6 @@ class DatabaseSchema:
             "CREATE INDEX IF NOT EXISTS idx_dblp_papers_key ON dblp_papers(key);",
             "CREATE INDEX IF NOT EXISTS idx_dblp_papers_create_time ON dblp_papers(create_time);",
             "CREATE INDEX IF NOT EXISTS idx_dblp_papers_update_time ON dblp_papers(update_time);",
-,
         ]
     
     def get_dblp_papers_triggers_sql(self) -> List[str]:
