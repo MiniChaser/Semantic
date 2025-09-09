@@ -304,7 +304,7 @@ class DBLPParser:
                 ee=self._extract_text(paper_elem.find("ee")),
                 booktitle=self._extract_text(paper_elem.find("booktitle")),
                 doi=self._extract_doi(paper_elem.find("ee")),
-                created_at=datetime.now().isoformat()
+                create_time=datetime.now().isoformat()
             )
             
             # Record found venue

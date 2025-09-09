@@ -25,8 +25,6 @@ class Paper:
     doi: Optional[str] = None
     create_time: Optional[str] = None
     update_time: Optional[str] = None
-    created_at: Optional[str] = None  # Legacy field for backward compatibility
-    updated_at: Optional[str] = None  # Legacy field for backward compatibility
     id: Optional[int] = None
     
     def to_dict(self) -> Dict:
@@ -57,9 +55,7 @@ class Paper:
             booktitle=data.get('booktitle'),
             doi=data.get('doi'),
             create_time=data.get('create_time'),
-            update_time=data.get('update_time'),
-            created_at=data.get('created_at'),  # Legacy field
-            updated_at=data.get('updated_at')   # Legacy field
+            update_time=data.get('update_time')
         )
 
 
@@ -102,8 +98,8 @@ class PaperRepository:
             sql = """
             INSERT INTO dblp_papers 
             (key, title, authors, author_count, venue, year, pages, ee, booktitle, doi, 
-             create_time, created_at)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+             create_time)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             ON CONFLICT (key) DO UPDATE SET
                 title = EXCLUDED.title,
                 authors = EXCLUDED.authors,
@@ -114,8 +110,7 @@ class PaperRepository:
                 ee = EXCLUDED.ee,
                 booktitle = EXCLUDED.booktitle,
                 doi = EXCLUDED.doi,
-                update_time = CURRENT_TIMESTAMP,
-                updated_at = CURRENT_TIMESTAMP
+                update_time = CURRENT_TIMESTAMP
             """
             
             current_time = datetime.now().isoformat()
@@ -130,8 +125,7 @@ class PaperRepository:
                 paper.ee,
                 paper.booktitle,
                 paper.doi,
-                paper.create_time or current_time,
-                paper.created_at or current_time  # Legacy field
+                paper.create_time or current_time
             )
             
             return self.db.execute_query(sql, params)
@@ -167,8 +161,7 @@ class PaperRepository:
                                 title = %s, authors = %s, author_count = %s,
                                 venue = %s, year = %s, pages = %s, ee = %s,
                                 booktitle = %s, doi = %s, 
-                                update_time = CURRENT_TIMESTAMP,
-                                updated_at = CURRENT_TIMESTAMP
+                                update_time = CURRENT_TIMESTAMP
                             WHERE key = %s
                             """
                             cursor.execute(update_sql, (
@@ -182,15 +175,14 @@ class PaperRepository:
                             insert_sql = """
                             INSERT INTO dblp_papers 
                             (key, title, authors, author_count, venue, year, pages, ee, 
-                             booktitle, doi, create_time, created_at)
-                            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                             booktitle, doi, create_time)
+                            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                             """
                             cursor.execute(insert_sql, (
                                 paper.key, paper.title, json.dumps(paper.authors),
                                 paper.author_count, paper.venue, paper.year,
                                 paper.pages, paper.ee, paper.booktitle, paper.doi,
-                                paper.create_time or current_time,
-                                paper.created_at or current_time  # Legacy field
+                                paper.create_time or current_time
                             ))
                             inserted += 1
                             

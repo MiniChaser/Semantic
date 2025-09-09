@@ -48,8 +48,6 @@ class DatabaseSchema:
             doi VARCHAR(100),
             create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             update_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            created_at TIMESTAMP,  -- Legacy field for backward compatibility
-            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP  -- Legacy field for backward compatibility
         );
         """
     
@@ -63,9 +61,7 @@ class DatabaseSchema:
             "CREATE INDEX IF NOT EXISTS idx_dblp_papers_key ON dblp_papers(key);",
             "CREATE INDEX IF NOT EXISTS idx_dblp_papers_create_time ON dblp_papers(create_time);",
             "CREATE INDEX IF NOT EXISTS idx_dblp_papers_update_time ON dblp_papers(update_time);",
-            # Legacy indexes for backward compatibility
-            "CREATE INDEX IF NOT EXISTS idx_dblp_papers_created_at ON dblp_papers(created_at);",
-            "CREATE INDEX IF NOT EXISTS idx_dblp_papers_updated_at ON dblp_papers(updated_at);",
+,
         ]
     
     def get_dblp_papers_triggers_sql(self) -> List[str]:
@@ -77,7 +73,6 @@ class DatabaseSchema:
             RETURNS TRIGGER AS $$
             BEGIN
                 NEW.update_time = CURRENT_TIMESTAMP;
-                NEW.updated_at = CURRENT_TIMESTAMP;  -- Legacy field
                 RETURN NEW;
             END;
             $$ LANGUAGE plpgsql;
@@ -249,34 +244,6 @@ class DatabaseSchema:
             self.logger.error(f"Failed to get table info for {table_name}: {e}")
             return {}
     
-    def migrate_legacy_timestamps(self) -> bool:
-        """Migrate data from legacy timestamp fields to new ones"""
-        try:
-            self.logger.info("Starting timestamp migration...")
-            
-            # Update create_time from created_at where create_time is null
-            update_create_time = """
-            UPDATE dblp_papers 
-            SET create_time = created_at::timestamp
-            WHERE create_time IS NULL AND created_at IS NOT NULL;
-            """
-            
-            # Update update_time from updated_at where update_time is null
-            update_update_time = """
-            UPDATE dblp_papers 
-            SET update_time = updated_at::timestamp
-            WHERE update_time IS NULL AND updated_at IS NOT NULL;
-            """
-            
-            self.db_manager.execute_query(update_create_time)
-            self.db_manager.execute_query(update_update_time)
-            
-            self.logger.info("Timestamp migration completed")
-            return True
-            
-        except Exception as e:
-            self.logger.error(f"Failed to migrate timestamps: {e}")
-            return False
 
 
 def main():
@@ -288,7 +255,6 @@ def main():
     parser.add_argument('--create', action='store_true', help='Create all tables')
     parser.add_argument('--drop', action='store_true', help='Drop all tables')
     parser.add_argument('--info', type=str, help='Get table information')
-    parser.add_argument('--migrate', action='store_true', help='Migrate legacy timestamps')
     
     args = parser.parse_args()
     
@@ -333,14 +299,8 @@ def main():
             else:
                 print(f"❌ Failed to get information for table: {args.info}")
         
-        elif args.migrate:
-            if schema.migrate_legacy_timestamps():
-                print("✅ Timestamp migration completed")
-            else:
-                print("❌ Timestamp migration failed")
-        
         else:
-            print("Please specify an action: --create, --drop, --info <table>, or --migrate")
+            print("Please specify an action: --create, --drop, or --info <table>")
     
     finally:
         db_manager.disconnect()

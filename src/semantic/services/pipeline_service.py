@@ -216,7 +216,7 @@ class DataPipelineService:
                 cutoff_date = datetime.now() - timedelta(days=self.config.incremental_check_days)
                 query = """
                 SELECT key FROM dblp_papers 
-                WHERE update_time >= %s OR created_at >= %s
+                WHERE update_time >= %s OR create_time >= %s
                 """
                 results = self.db_manager.fetch_all(query, (cutoff_date, cutoff_date))
             else:
