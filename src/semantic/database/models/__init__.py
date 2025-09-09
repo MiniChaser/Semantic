@@ -2,8 +2,8 @@
 Database models module
 """
 
-from .paper import Paper
-# Import PaperRepository for backward compatibility (it was originally in models.py)
-from ..repositories.paper import PaperRepository
+from .paper import DBLP_Paper
+# Import DBLPPaperRepository for backward compatibility (it was originally in models.py)
+from ..repositories.paper import DBLPPaperRepository
 
-__all__ = ['Paper', 'PaperRepository']
+__all__ = ['DBLP_Paper', 'DBLPPaperRepository']

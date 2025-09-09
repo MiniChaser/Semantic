@@ -13,7 +13,7 @@ from typing import List, Dict, Optional, Set, Tuple
 from dataclasses import dataclass
 from tqdm import tqdm
 from lxml import etree
-from ..database.models import Paper
+from ..database.models import DBLP_Paper
 from ..utils.config import AppConfig
 
 
@@ -178,7 +178,7 @@ class DBLPParser:
         return logger
     
     def parse_xml(self, incremental: bool = False, 
-                  existing_keys: Set[str] = None) -> List[Paper]:
+                  existing_keys: Set[str] = None) -> List[DBLP_Paper]:
         """Parse DBLP XML file"""
         if not os.path.exists(self.config.xml_file):
             self.logger.error("XML file does not exist, please download and extract first")
@@ -263,7 +263,7 @@ class DBLPParser:
             self.logger.error(f"XML parsing failed: {e}")
             return []
     
-    def _extract_paper_data(self, paper_elem) -> Optional[Paper]:
+    def _extract_paper_data(self, paper_elem) -> Optional[DBLP_Paper]:
         """Extract single paper data"""
         try:
             # Get venue information
@@ -293,7 +293,7 @@ class DBLPParser:
                 return None
             
             # Build paper record
-            paper = Paper(
+            paper = DBLP_Paper(
                 key=key,
                 title=self._clean_text(title_elem.text),
                 authors=authors,
@@ -407,7 +407,7 @@ class DBLPService:
         return True
     
     def parse_papers(self, incremental: bool = False, 
-                    existing_keys: Set[str] = None) -> List[Paper]:
+                    existing_keys: Set[str] = None) -> List[DBLP_Paper]:
         """Parse paper data"""
         self.logger.info(f"Starting paper data parsing (incremental mode: {incremental})...")
         

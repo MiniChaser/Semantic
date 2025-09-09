@@ -2,6 +2,6 @@
 Database repositories module
 """
 
-from .paper import PaperRepository
+from .paper import DBLPPaperRepository
 
-__all__ = ['PaperRepository']
+__all__ = ['DBLPPaperRepository']

@@ -7,11 +7,11 @@ import logging
 from datetime import datetime
 from typing import List, Dict, Optional, Tuple
 from ..connection import DatabaseManager
-from ..models.paper import Paper
+from ..models.paper import DBLP_Paper
 
 
-class PaperRepository:
-    """Paper data repository class"""
+class DBLPPaperRepository:
+    """DBLP Paper data repository class"""
     
     def __init__(self, db_manager: DatabaseManager):
         self.db = db_manager
@@ -19,7 +19,7 @@ class PaperRepository:
     
     def _setup_logger(self) -> logging.Logger:
         """Setup logger for repository operations"""
-        logger = logging.getLogger(f'{__name__}.PaperRepository')
+        logger = logging.getLogger(f'{__name__}.DBLPPaperRepository')
         logger.setLevel(logging.INFO)
         
         if not logger.handlers:
@@ -43,7 +43,7 @@ class PaperRepository:
             self.logger.error(f"Failed to create tables: {e}")
             return False
     
-    def insert_paper(self, paper: Paper) -> bool:
+    def insert_paper(self, paper: DBLP_Paper) -> bool:
         """Insert single paper"""
         try:
             sql = """
@@ -85,7 +85,7 @@ class PaperRepository:
             self.logger.error(f"Failed to insert paper: {e}")
             return False
     
-    def batch_insert_papers(self, papers: List[Paper]) -> Tuple[int, int, int]:
+    def batch_insert_papers(self, papers: List[DBLP_Paper]) -> Tuple[int, int, int]:
         """Batch insert papers"""
         if not papers:
             return 0, 0, 0
@@ -148,17 +148,17 @@ class PaperRepository:
             self.logger.error(f"Batch operation failed: {e}")
             return 0, 0, len(papers)
     
-    def get_paper_by_key(self, key: str) -> Optional[Paper]:
+    def get_paper_by_key(self, key: str) -> Optional[DBLP_Paper]:
         """Get paper by key"""
         try:
             sql = "SELECT * FROM dblp_papers WHERE key = %s"
             result = self.db.fetch_one(sql, (key,))
-            return Paper.from_dict(dict(result)) if result else None
+            return DBLP_Paper.from_dict(dict(result)) if result else None
         except Exception as e:
             self.logger.error(f"Failed to get paper: {e}")
             return None
     
-    def get_papers_by_venue(self, venue: str, limit: int = None) -> List[Paper]:
+    def get_papers_by_venue(self, venue: str, limit: int = None) -> List[DBLP_Paper]:
         """Get papers by venue"""
         try:
             sql = "SELECT * FROM dblp_papers WHERE venue = %s ORDER BY year DESC, key"
@@ -166,7 +166,7 @@ class PaperRepository:
                 sql += f" LIMIT {limit}"
             
             results = self.db.fetch_all(sql, (venue,))
-            return [Paper.from_dict(dict(row)) for row in results]
+            return [DBLP_Paper.from_dict(dict(row)) for row in results]
         except Exception as e:
             self.logger.error(f"Failed to get papers by venue: {e}")
             return []

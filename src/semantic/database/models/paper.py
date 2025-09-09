@@ -9,8 +9,8 @@ from dataclasses import dataclass, asdict
 
 
 @dataclass
-class Paper:
-    """Paper data model"""
+class DBLP_Paper:
+    """DBLP Paper data model"""
     key: str
     title: str
     authors: List[str]
@@ -30,8 +30,8 @@ class Paper:
         return asdict(self)
     
     @classmethod
-    def from_dict(cls, data: Dict) -> 'Paper':
-        """Create Paper object from dictionary"""
+    def from_dict(cls, data: Dict) -> 'DBLP_Paper':
+        """Create DBLP_Paper object from dictionary"""
         # Handle authors field (could be JSON string or list)
         authors = data.get('authors', [])
         if isinstance(authors, str):

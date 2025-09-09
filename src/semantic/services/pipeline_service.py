@@ -8,7 +8,7 @@ import time
 from datetime import datetime, timedelta
 from typing import List, Set, Tuple, Dict, Any
 from ..database.connection import DatabaseManager, get_db_manager
-from ..database.models import PaperRepository, Paper
+from ..database.models import DBLPPaperRepository, DBLP_Paper
 from ..services.dblp_service import DBLPService
 from ..utils.config import AppConfig
 
@@ -19,7 +19,7 @@ class DataPipelineService:
     def __init__(self, config: AppConfig, db_manager: DatabaseManager = None):
         self.config = config
         self.db_manager = db_manager or get_db_manager()
-        self.paper_repo = PaperRepository(self.db_manager)
+        self.paper_repo = DBLPPaperRepository(self.db_manager)
         self.dblp_service = DBLPService(config)
         self.logger = self._setup_logger()
         
@@ -66,7 +66,7 @@ class DataPipelineService:
             self.logger.error(f"Step 1 failed: {e}")
             return False
     
-    def step2_extract_papers(self) -> List[Paper]:
+    def step2_extract_papers(self) -> List[DBLP_Paper]:
         """Step 2: Extract paper data"""
         try:
             self.logger.info(f"[{datetime.now()}] Executing Step 2: Extract paper data")
@@ -99,7 +99,7 @@ class DataPipelineService:
             self.logger.error(f"Step 2 failed: {e}")
             return []
     
-    def step3_load_papers(self, papers: List[Paper]) -> bool:
+    def step3_load_papers(self, papers: List[DBLP_Paper]) -> bool:
         """Step 3: Load papers to database"""
         try:
             if not papers:
