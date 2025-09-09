@@ -1,26 +1,26 @@
-# DBLP完整数据处理管道
+# DBLP Complete Data Processing Pipeline
 
-本文档包含一个完整的DBLP数据处理脚本，涵盖从下载原始数据到保存到数据库的全过程。
+This document contains a complete DBLP data processing script that covers the entire process from downloading raw data to saving to database.
 
-## 脚本功能
+## Script Features
 
-1. 下载DBLP XML压缩文件
-2. 解压缩文件
-3. 解析XML并提取论文数据
-4. 保存到SQLite/PostgreSQL数据库
-5. 生成处理报告
+1. Download DBLP XML compressed file
+2. Extract compressed file
+3. Parse XML and extract paper data
+4. Save to SQLite/PostgreSQL database
+5. Generate processing report
 
-## 完整实现脚本
+## Complete Implementation Script
 
 ```python
 #!/usr/bin/env python3
 """
-DBLP完整数据处理管道
-包含下载、解压、解析和数据库保存的全过程
+DBLP Complete Data Processing Pipeline
+Contains the complete process of download, extraction, parsing and database saving
 
-作者: ATIP项目团队
-版本: 2.0
-日期: 2025-01-09
+Author: ATIP Project Team
+Version: 2.0
+Date: 2025-01-09
 """
 
 import os
@@ -38,30 +38,30 @@ from tqdm import tqdm
 from lxml import etree
 import pandas as pd
 
-# 配置类
+# Configuration class
 @dataclass
 class DBLPConfig:
-    """DBLP处理配置"""
-    # 下载配置
+    """DBLP processing configuration"""
+    # Download configuration
     dblp_url: str = "https://dblp.org/xml/dblp.xml.gz"
     download_dir: str = "external"
     
-    # 文件路径
+    # File paths
     compressed_file: str = "external/dblp.xml.gz"
     xml_file: str = "external/dblp.xml"
     
-    # 数据库配置
-    db_type: str = "sqlite"  # "sqlite" 或 "postgresql"
+    # Database configuration
+    db_type: str = "sqlite"  # "sqlite" or "postgresql"
     db_path: str = "data/dblp.db"
     
-    # PostgreSQL配置（如果使用）
+    # PostgreSQL configuration (if used)
     pg_host: str = "localhost"
     pg_port: int = 5432
     pg_database: str = "atip"
     pg_username: str = "postgres"
     pg_password: str = "password"
     
-    # 处理配置
+    # Processing configuration
     target_venues: set = None
     batch_size: int = 10000
     log_level: str = "INFO"
@@ -71,7 +71,7 @@ class DBLPConfig:
             self.target_venues = {'acl', 'naacl', 'emnlp', 'findings'}
 
 class DBLPDownloader:
-    """DBLP数据下载器"""
+    """DBLP data downloader"""
     
     def __init__(self, config: DBLPConfig):
         self.config = config

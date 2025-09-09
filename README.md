@@ -16,53 +16,53 @@ A modern DBLP data processing pipeline with scheduling, incremental updates, and
 - **💾 Batch Processing**: Memory-friendly batch processing mechanisms
 - **✨ NEW: Enhanced Time Tracking**: New `create_time`/`update_time` columns with automatic triggers
 
-## 项目架构
+## Project Architecture
 
 ```
 semantic/
-├── src/semantic/           # 主要源代码
-│   ├── database/          # 数据库相关模块
-│   │   ├── connection.py  # 数据库连接管理
-│   │   └── models.py      # 数据模型和仓库
-│   ├── services/          # 业务服务层
-│   │   ├── dblp_service.py      # DBLP数据处理服务
-│   │   └── pipeline_service.py  # 数据管道服务
-│   ├── scheduler/         # 任务调度
-│   │   └── scheduler.py   # APScheduler调度器
-│   └── utils/            # 工具模块
-│       └── config.py     # 配置管理
-├── scripts/              # 运行脚本
-│   ├── run_scheduler.py   # 调度器启动脚本
-│   └── run_pipeline_once.py # 单次运行脚本
-├── config/              # 配置文件
-├── logs/                # 日志文件
-├── data/                # 数据文件
-└── external/            # 外部下载文件
+├── src/semantic/           # Main source code
+│   ├── database/          # Database related modules
+│   │   ├── connection.py  # Database connection management
+│   │   └── models.py      # Data models and repositories
+│   ├── services/          # Business service layer
+│   │   ├── dblp_service.py      # DBLP data processing service
+│   │   └── pipeline_service.py  # Data pipeline service
+│   ├── scheduler/         # Task scheduling
+│   │   └── scheduler.py   # APScheduler scheduler
+│   └── utils/            # Utility modules
+│       └── config.py     # Configuration management
+├── scripts/              # Execution scripts
+│   ├── run_scheduler.py   # Scheduler startup script
+│   └── run_pipeline_once.py # Single run script
+├── config/              # Configuration files
+├── logs/                # Log files
+├── data/                # Data files
+└── external/            # External download files
 ```
 
-## 快速开始
+## Quick Start
 
-### 1. 环境准备
+### 1. Environment Setup
 
 ```bash
-# 安装uv (如果还没安装)
+# Install uv (if not already installed)
 curl -LsSf https://astral.sh/uv/install.sh | sh
 
-# 克隆/下载项目到本地
+# Clone/download project to local
 cd semantic
 
-# 使用uv安装依赖
+# Install dependencies using uv
 uv sync
 ```
 
-### 2. 配置数据库
+### 2. Database Configuration
 
-复制环境变量模板：
+Copy environment variable template:
 ```bash
 cp .env.example .env
 ```
 
-编辑 `.env` 文件，填入你的PostgreSQL连接信息：
+Edit `.env` file and fill in your PostgreSQL connection information:
 ```bash
 # PostgreSQL Database Configuration
 DB_HOST=localhost
@@ -82,65 +82,65 @@ SCHEDULE_CRON=0 2 * * 1
 ENABLE_INCREMENTAL=true
 ```
 
-### 3. 运行管道
+### 3. Run Pipeline
 
-#### 单次运行
+#### Single Run
 ```bash
-# 使用脚本运行一次完整管道
+# Run complete pipeline once using script
 ./scripts/run_pipeline_once.py
 
-# 或者使用uv运行
+# Or run using uv
 uv run python scripts/run_pipeline_once.py
 ```
 
-#### 启动定时调度器
+#### Start Scheduled Scheduler
 ```bash
-# 启动定时调度器（按配置的cron表达式运行）
+# Start scheduled scheduler (runs according to configured cron expression)
 ./scripts/run_scheduler.py
 
-# 手动执行一次（立即执行）
+# Manual execution once (execute immediately)
 ./scripts/run_scheduler.py --manual
 
-# 列出所有任务
+# List all tasks
 ./scripts/run_scheduler.py --list-jobs
 ```
 
-#### 直接使用Python模块
+#### Direct Python Module Usage
 ```bash
-# 进入虚拟环境
+# Enter virtual environment
 uv shell
 
-# 使用Python模块
+# Use Python module
 python -m semantic.scheduler.scheduler --manual
 ```
 
-## 配置选项
+## Configuration Options
 
-### 数据库配置
-- `DB_HOST`: PostgreSQL主机地址
-- `DB_PORT`: PostgreSQL端口
-- `DB_NAME`: 数据库名称
-- `DB_USER`: 数据库用户名
-- `DB_PASSWORD`: 数据库密码
+### Database Configuration
+- `DB_HOST`: PostgreSQL host address
+- `DB_PORT`: PostgreSQL port
+- `DB_NAME`: Database name
+- `DB_USER`: Database username
+- `DB_PASSWORD`: Database password
 
-### 处理配置
-- `TARGET_VENUES`: 目标会议列表（逗号分隔）
-- `ENABLE_VENUE_FILTER`: 是否启用会议筛选（true/false）
-- `BATCH_SIZE`: 批处理大小（默认10000）
-- `LOG_LEVEL`: 日志级别（INFO/DEBUG/WARNING/ERROR）
+### Processing Configuration
+- `TARGET_VENUES`: Target venue list (comma-separated)
+- `ENABLE_VENUE_FILTER`: Whether to enable venue filtering (true/false)
+- `BATCH_SIZE`: Batch processing size (default 10000)
+- `LOG_LEVEL`: Log level (INFO/DEBUG/WARNING/ERROR)
 
-### 调度配置
-- `SCHEDULE_CRON`: Cron表达式（默认: 0 2 * * 1，每周一凌晨2点）
-- `MAX_RETRIES`: 最大重试次数（默认3）
-- `RETRY_DELAY`: 重试延迟秒数（默认300）
+### Scheduling Configuration
+- `SCHEDULE_CRON`: Cron expression (default: 0 2 * * 1, every Monday at 2 AM)
+- `MAX_RETRIES`: Maximum retry count (default 3)
+- `RETRY_DELAY`: Retry delay in seconds (default 300)
 
-### 增量处理配置
-- `ENABLE_INCREMENTAL`: 是否启用增量处理（true/false）
-- `INCREMENTAL_CHECK_DAYS`: 增量检查天数（默认7）
+### Incremental Processing Configuration
+- `ENABLE_INCREMENTAL`: Whether to enable incremental processing (true/false)
+- `INCREMENTAL_CHECK_DAYS`: Incremental check days (default 7)
 
-## 数据库表结构
+## Database Table Structure
 
-### 主要数据表
+### Main Data Tables
 ```sql
 CREATE TABLE dblp_papers (
     id SERIAL PRIMARY KEY,
@@ -159,7 +159,7 @@ CREATE TABLE dblp_papers (
 );
 ```
 
-### 处理元数据表
+### Processing Metadata Tables
 ```sql
 CREATE TABLE dblp_processing_meta (
     id SERIAL PRIMARY KEY,
@@ -174,198 +174,198 @@ CREATE TABLE dblp_processing_meta (
 );
 ```
 
-### 调度器作业表
+### Scheduler Job Tables
 ```sql
 CREATE TABLE scheduler_jobs (
-    -- APScheduler自动创建的表结构
+    -- Table structure automatically created by APScheduler
 );
 ```
 
-## 工作流程
+## Workflow
 
-### 增量处理流程
-1. **检查上次运行时间**: 从`dblp_processing_meta`表获取上次成功运行时间
-2. **决定处理模式**: 根据配置和时间间隔决定是全量还是增量处理
-3. **数据准备**: 下载和解压DBLP数据文件
-4. **增量解析**: 只处理不存在于数据库的新论文
-5. **批量更新**: 使用UPSERT操作批量插入或更新数据
-6. **记录元数据**: 记录本次处理的统计信息
+### Incremental Processing Workflow
+1. **Check Last Run Time**: Get last successful run time from `dblp_processing_meta` table
+2. **Determine Processing Mode**: Decide between full or incremental processing based on configuration and time interval
+3. **Data Preparation**: Download and extract DBLP data files
+4. **Incremental Parsing**: Only process new papers that don't exist in the database
+5. **Batch Update**: Use UPSERT operations to batch insert or update data
+6. **Record Metadata**: Record statistics for this processing run
 
-### 调度器工作流程
-1. **初始化**: 连接数据库，设置作业存储
-2. **作业注册**: 根据Cron表达式注册定时任务
-3. **任务执行**: 在指定时间执行数据管道
-4. **错误处理**: 失败时自动重试，记录错误日志
-5. **状态监控**: 监听作业执行状态，生成执行报告
+### Scheduler Workflow
+1. **Initialization**: Connect to database, set up job storage
+2. **Job Registration**: Register scheduled tasks based on Cron expressions
+3. **Task Execution**: Execute data pipeline at specified times
+4. **Error Handling**: Automatic retry on failure, record error logs
+5. **Status Monitoring**: Monitor job execution status, generate execution reports
 
-## 使用示例
+## Usage Examples
 
-### 编程接口使用
+### Programming Interface Usage
 ```python
 from semantic.services.pipeline_service import DataPipelineService
 from semantic.utils.config import AppConfig
 from semantic.database.connection import get_db_manager
 
-# 创建配置
+# Create configuration
 config = AppConfig.from_env()
 
-# 创建管道服务
+# Create pipeline service
 pipeline = DataPipelineService(config)
 
-# 运行完整管道
+# Run complete pipeline
 success = pipeline.run_pipeline()
 
-# 导出数据
+# Export data
 if success:
     pipeline.export_to_csv("output/papers.csv")
 ```
 
-### 独立模块使用
+### Independent Module Usage
 ```python
 from semantic.services.dblp_service import DBLPService
 from semantic.database.models import PaperRepository
 from semantic.database.connection import get_db_manager
 
-# 使用DBLP服务
+# Use DBLP service
 dblp_service = DBLPService(config)
 papers = dblp_service.parse_papers()
 
-# 使用数据库仓库
+# Use database repository
 db_manager = get_db_manager()
 paper_repo = PaperRepository(db_manager)
 paper_repo.batch_insert_papers(papers)
 ```
 
-## 开发指南
+## Development Guide
 
-### 安装开发依赖
+### Install Development Dependencies
 ```bash
 uv sync --dev
 ```
 
-### 代码格式化
+### Code Formatting
 ```bash
 uv run black src/
 uv run isort src/
 ```
 
-### 代码检查
+### Code Checking
 ```bash
 uv run flake8 src/
 ```
 
-### 运行测试
+### Run Tests
 ```bash
 uv run pytest tests/
 ```
 
-## 扩展和集成
+## Extension and Integration
 
-### 添加新的数据源
-1. 在`src/semantic/services/`中创建新的服务类
-2. 实现统一的数据接口（继承基础服务类）
-3. 在管道服务中集成新的数据源
+### Adding New Data Sources
+1. Create new service classes in `src/semantic/services/`
+2. Implement unified data interfaces (inherit from base service classes)
+3. Integrate new data sources in pipeline service
 
-### 添加新的数据处理步骤
-1. 在管道服务中添加新的步骤方法
-2. 更新`run_pipeline()`方法的执行流程
-3. 添加相应的配置选项和错误处理
+### Adding New Data Processing Steps
+1. Add new step methods in pipeline service
+2. Update execution flow of `run_pipeline()` method
+3. Add corresponding configuration options and error handling
 
-### 集成其他调度系统
-1. 实现自定义的调度器类
-2. 保持与现有管道服务的接口兼容
-3. 提供相同的监控和日志功能
+### Integrating Other Scheduling Systems
+1. Implement custom scheduler classes
+2. Maintain interface compatibility with existing pipeline services
+3. Provide the same monitoring and logging functionality
 
-## 监控和日志
+## Monitoring and Logging
 
-### 日志文件
-- 管道执行日志: `logs/dblp_service_YYYYMMDD_HHMMSS.log`
-- 调度器日志: `logs/scheduler_YYYYMMDD.log`
-- 数据库操作日志: 集成在管道日志中
+### Log Files
+- Pipeline execution logs: `logs/dblp_service_YYYYMMDD_HHMMSS.log`
+- Scheduler logs: `logs/scheduler_YYYYMMDD.log`
+- Database operation logs: Integrated in pipeline logs
 
-### 监控指标
-- 处理论文数量
-- 新增/更新论文统计
-- 执行时间
-- 错误率
-- 重试次数
+### Monitoring Metrics
+- Number of papers processed
+- New/updated paper statistics
+- Execution time
+- Error rate
+- Retry count
 
-### 数据库监控
+### Database Monitoring
 ```sql
--- 查看处理历史
+-- View processing history
 SELECT * FROM dblp_processing_meta ORDER BY created_at DESC LIMIT 10;
 
--- 查看数据统计
+-- View data statistics
 SELECT venue, COUNT(*) as count 
 FROM dblp_papers 
 GROUP BY venue 
 ORDER BY count DESC;
 ```
 
-## 故障排除
+## Troubleshooting
 
-### 常见问题
+### Common Issues
 
-**连接失败**
-- 检查PostgreSQL服务是否运行
-- 验证.env文件中的连接信息
-- 确认数据库存在且用户有权限
+**Connection Failed**
+- Check if PostgreSQL service is running
+- Verify connection information in .env file
+- Confirm database exists and user has permissions
 
-**下载失败**
-- 检查网络连接
-- 验证DBLP URL是否可访问
-- 检查磁盘空间
+**Download Failed**
+- Check network connection
+- Verify DBLP URL is accessible
+- Check disk space
 
-**调度器启动失败**
-- 检查Cron表达式格式
-- 验证数据库连接
-- 查看调度器日志文件
+**Scheduler Startup Failed**
+- Check Cron expression format
+- Verify database connection
+- Check scheduler log files
 
-**增量处理异常**
-- 检查元数据表是否存在
-- 验证增量配置参数
-- 清理临时文件重新运行
+**Incremental Processing Exception**
+- Check if metadata tables exist
+- Verify incremental configuration parameters
+- Clean temporary files and re-run
 
-### 性能优化建议
+### Performance Optimization Recommendations
 
-1. **数据库优化**
-   - 定期执行VACUUM ANALYZE
-   - 监控索引使用情况
-   - 调整批处理大小
+1. **Database Optimization**
+   - Regularly execute VACUUM ANALYZE
+   - Monitor index usage
+   - Adjust batch processing size
 
-2. **内存优化**
-   - 根据服务器内存调整批处理大小
-   - 监控内存使用情况
-   - 及时清理临时文件
+2. **Memory Optimization**
+   - Adjust batch processing size based on server memory
+   - Monitor memory usage
+   - Clean up temporary files promptly
 
-3. **网络优化**
-   - 使用稳定的网络连接
-   - 考虑使用代理服务器
-   - 设置合适的超时时间
+3. **Network Optimization**
+   - Use stable network connections
+   - Consider using proxy servers
+   - Set appropriate timeout values
 
-## 许可证
+## License
 
-此项目遵循MIT许可证。
+This project follows the MIT License.
 
-## 贡献指南
+## Contributing Guide
 
-欢迎提交Pull Request和Issue！请确保：
+Welcome to submit Pull Requests and Issues! Please ensure:
 
-1. 代码符合项目的格式规范
-2. 添加适当的测试用例
-3. 更新相关文档
-4. 遵循现有的架构模式
+1. Code follows the project's formatting standards
+2. Add appropriate test cases
+3. Update relevant documentation
+4. Follow existing architectural patterns
 
-## 更新日志
+## Changelog
 
 ### v2.0.0
-- 重构为模块化架构
-- 添加增量处理功能
-- 集成APScheduler定时调度
-- 增强错误处理和重试机制
-- 完善日志和监控系统
+- Refactored to modular architecture
+- Added incremental processing functionality
+- Integrated APScheduler scheduled tasks
+- Enhanced error handling and retry mechanisms
+- Improved logging and monitoring systems
 
 ### v1.0.0
-- 基础DBLP数据处理功能
-- PostgreSQL数据存储
-- 基本的批处理机制
+- Basic DBLP data processing functionality
+- PostgreSQL data storage
+- Basic batch processing mechanisms

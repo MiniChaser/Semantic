@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """
-调度器启动脚本
+Scheduler startup script
 """
 
 import sys
 import os
 
-# 添加src目录到Python路径
+# Add src directory to Python path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
 from semantic.scheduler.scheduler import main

@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """
-单次运行数据管道脚本
+Single run data pipeline script
 """
 
 import sys
 import os
 
-# 添加src目录到Python路径
+# Add src directory to Python path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
 from semantic.services.pipeline_service import DataPipelineService
@@ -14,44 +14,44 @@ from semantic.utils.config import AppConfig
 from semantic.database.connection import get_db_manager
 
 def main():
-    """主函数"""
+    """Main function"""
     try:
-        print("正在初始化数据管道...")
+        print("Initializing data pipeline...")
         
-        # 加载配置
+        # Load configuration
         config = AppConfig.from_env()
         
-        # 验证配置
+        # Validate configuration
         if not config.validate():
-            print("配置验证失败，请检查环境变量")
+            print("Configuration validation failed, please check environment variables")
             return False
         
-        print(f"配置加载成功: {config}")
+        print(f"Configuration loaded successfully: {config}")
         
-        # 获取Database manager class
+        # Get Database manager class
         db_manager = get_db_manager()
         
-        # 创建管道服务
+        # Create pipeline service
         pipeline = DataPipelineService(config, db_manager)
         
-        # 运行管道
+        # Run pipeline
         print("Starting data pipeline execution...")
         success = pipeline.run_pipeline()
         
         if success:
             print("✅ Data pipeline execution completed successfully!")
             
-            # 询问是否导出CSV
-            export_csv = input("是否导出数据到CSV文件? (y/n): ").lower().strip()
+            # Ask whether to export CSV
+            export_csv = input("Export data to CSV file? (y/n): ").lower().strip()
             if export_csv == 'y':
-                output_path = input("请输入输出路径 (默认: data/dblp_papers_export.csv): ").strip()
+                output_path = input("Enter output path (default: data/dblp_papers_export.csv): ").strip()
                 if not output_path:
                     output_path = "data/dblp_papers_export.csv"
                 
                 if pipeline.export_to_csv(output_path):
-                    print("✅ CSV导出完成!")
+                    print("✅ CSV export completed!")
                 else:
-                    print("❌ CSV导出失败!")
+                    print("❌ CSV export failed!")
             
             return True
         else:
@@ -59,13 +59,13 @@ def main():
             return False
             
     except KeyboardInterrupt:
-        print("\n用户中断执行")
+        print("\nUser interrupted execution")
         return False
     except Exception as e:
-        print(f"执行失败: {e}")
+        print(f"Execution failed: {e}")
         return False
     finally:
-        # 清理资源
+        # Clean up resources
         try:
             db_manager = get_db_manager()
             db_manager.disconnect()
