@@ -41,17 +41,12 @@ def main():
         if success:
             print("✅ Data pipeline execution completed successfully!")
             
-            # Ask whether to export CSV
-            export_csv = input("Export data to CSV file? (y/n): ").lower().strip()
-            if export_csv == 'y':
-                output_path = input("Enter output path (default: data/dblp_papers_export.csv): ").strip()
-                if not output_path:
-                    output_path = "data/dblp_papers_export.csv"
-                
-                if pipeline.export_to_csv(output_path):
-                    print("✅ CSV export completed!")
-                else:
-                    print("❌ CSV export failed!")
+            # Automatically export to CSV
+            output_path = "data/dblp_papers_export.csv"
+            if pipeline.export_to_csv(output_path):
+                print("✅ CSV export completed!")
+            else:
+                print("❌ CSV export failed!")
             
             return True
         else:

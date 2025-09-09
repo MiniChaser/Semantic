@@ -309,7 +309,7 @@ class DataPipelineService:
             ORDER BY venue, year DESC, key
             """
             
-            df = pd.read_sql_query(query, self.db_manager.get_connection())
+            df = pd.read_sql_query(query, self.db_manager.config.get_connection_string())
             
             # Save to CSV
             df.to_csv(output_path, index=False)
