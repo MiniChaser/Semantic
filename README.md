@@ -1,19 +1,20 @@
-# DBLP语义数据处理管道 v2.0
+# DBLP Semantic Data Processing Pipeline v2.1
 
-这是一个现代化的DBLP数据处理管道，支持定时调度、增量更新和模块化架构。
+A modern DBLP data processing pipeline with scheduling, incremental updates, and modular architecture.
 
-## 功能特性
+## Key Features
 
-- **🚀 完整管道**: 下载、解压、解析、入库一站式处理
-- **🔄 增量处理**: 支持增量更新，避免重复处理已存在数据
-- **⏰ 定时调度**: 基于APScheduler的可配置定时任务
-- **🏗️ 模块化架构**: 独立的服务组件，便于扩展和维护
-- **📊 PostgreSQL支持**: 专为PostgreSQL优化的数据存储
-- **⚙️ 环境配置**: 通过.env文件管理所有配置
-- **📦 uv项目管理**: 使用现代Python包管理工具
-- **📈 进度追踪**: 详细的进度条和日志记录
-- **🛡️ 错误处理**: 完善的错误处理和重试机制
-- **💾 批量处理**: 内存友好的批处理机制
+- **🚀 Complete Pipeline**: One-stop processing from download to database storage
+- **🔄 Incremental Processing**: Supports incremental updates, avoiding reprocessing existing data  
+- **⏰ Scheduled Tasks**: Configurable timed tasks based on APScheduler
+- **🏗️ Modular Architecture**: Independent service components for easy scaling and maintenance
+- **📊 PostgreSQL Optimized**: Specialized data storage optimized for PostgreSQL
+- **⚙️ Environment Configuration**: Manage all settings via .env files
+- **📦 UV Project Management**: Modern Python package management with uv
+- **📈 Progress Tracking**: Detailed progress bars and logging
+- **🛡️ Error Handling**: Comprehensive error handling and retry mechanisms  
+- **💾 Batch Processing**: Memory-friendly batch processing mechanisms
+- **✨ NEW: Enhanced Time Tracking**: New `create_time`/`update_time` columns with automatic triggers
 
 ## 项目架构
 

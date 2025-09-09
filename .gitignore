@@ -1,0 +1,10 @@
+.venv/
+.env
+external/
+data/
+logs/
+output/
+tests/
+tests_results/
+tests_results/
+*.pyc

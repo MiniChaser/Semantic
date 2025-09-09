@@ -28,18 +28,18 @@ def main():
         
         print(f"配置加载成功: {config}")
         
-        # 获取数据库管理器
+        # 获取Database manager class
         db_manager = get_db_manager()
         
         # 创建管道服务
         pipeline = DataPipelineService(config, db_manager)
         
         # 运行管道
-        print("开始执行数据管道...")
+        print("Starting data pipeline execution...")
         success = pipeline.run_pipeline()
         
         if success:
-            print("✅ 数据管道执行成功!")
+            print("✅ Data pipeline execution completed successfully!")
             
             # 询问是否导出CSV
             export_csv = input("是否导出数据到CSV文件? (y/n): ").lower().strip()
@@ -55,7 +55,7 @@ def main():
             
             return True
         else:
-            print("❌ 数据管道执行失败!")
+            print("❌ Data pipeline execution failed!")
             return False
             
     except KeyboardInterrupt:

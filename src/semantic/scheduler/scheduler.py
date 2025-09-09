@@ -32,7 +32,7 @@ class DataPipelineScheduler:
         self.retry_count = 0
     
     def _setup_logger(self) -> logging.Logger:
-        """设置日志记录器"""
+        """Setup logger"""
         logger = logging.getLogger(f'{__name__}.DataPipelineScheduler')
         logger.setLevel(getattr(logging, self.config.log_level))
         
@@ -99,7 +99,7 @@ class DataPipelineScheduler:
             
         except Exception as e:
             self.logger.error(f"调度器设置失败: {e}")
-            # 如果数据库连接失败，使用内存存储作为后备
+            # 如果Failed to connect to database，使用内存存储作为后备
             scheduler = BlockingScheduler(timezone='Asia/Shanghai')
             scheduler.add_listener(self._job_executed_listener, EVENT_JOB_EXECUTED)
             scheduler.add_listener(self._job_error_listener, EVENT_JOB_ERROR)
@@ -107,18 +107,18 @@ class DataPipelineScheduler:
             return scheduler
     
     def _job_executed_listener(self, event):
-        """作业执行成功监听器"""
-        self.logger.info(f"作业执行成功: {event.job_id}")
+        """Job executed successfully监听器"""
+        self.logger.info(f"Job executed successfully: {event.job_id}")
         self.retry_count = 0  # 重置重试计数
     
     def _job_error_listener(self, event):
-        """作业执行失败监听器"""
-        self.logger.error(f"作业执行失败: {event.job_id}, 异常: {event.exception}")
+        """Job execution failed监听器"""
+        self.logger.error(f"Job execution failed: {event.job_id}, 异常: {event.exception}")
         self._handle_job_retry(event.job_id)
     
     def _job_missed_listener(self, event):
-        """作业错过执行监听器"""
-        self.logger.warning(f"作业错过执行: {event.job_id}")
+        """Job execution missed监听器"""
+        self.logger.warning(f"Job execution missed: {event.job_id}")
     
     def _handle_job_retry(self, job_id: str):
         """处理作业重试"""
@@ -142,7 +142,7 @@ class DataPipelineScheduler:
         """运行数据管道的包装方法"""
         try:
             self.logger.info("=" * 80)
-            self.logger.info("定时任务触发：开始执行数据管道")
+            self.logger.info("Scheduled task triggered：Starting data pipeline execution")
             self.logger.info("=" * 80)
             
             # 检查是否应该执行（增量模式下的额外检查）
@@ -154,9 +154,9 @@ class DataPipelineScheduler:
             success = self.pipeline_service.run_pipeline()
             
             if success:
-                self.logger.info("定时任务完成：数据管道执行成功")
+                self.logger.info("定时任务完成：Data pipeline execution completed successfully")
             else:
-                raise Exception("数据管道执行失败")
+                raise Exception("Data pipeline execution failed")
                 
         except Exception as e:
             self.logger.error(f"定时任务失败: {str(e)}")
@@ -217,18 +217,18 @@ class DataPipelineScheduler:
         try:
             self.logger.info("正在启动数据管道调度器...")
             
-            # 测试数据库连接
+            # Test database connection
             if not self.db_manager.test_connection():
-                raise Exception("数据库连接测试失败")
+                raise Exception("数据库Connection test failed")
             
             # 添加任务
             if manual_run:
                 self.add_manual_job()
-                self.logger.info("调度器已启动（手动模式），数据管道将立即执行...")
+                self.logger.info("Scheduler started（手动模式），数据管道将立即执行...")
             else:
                 self.add_pipeline_job()
                 next_run = self.scheduler.get_job('dblp_pipeline_job').next_run_time
-                self.logger.info(f"调度器已启动，下次运行时间: {next_run}")
+                self.logger.info(f"Scheduler started，下次运行时间: {next_run}")
             
             self.logger.info("按Ctrl+C停止调度器")
             
@@ -251,7 +251,7 @@ class DataPipelineScheduler:
             if self.db_manager:
                 self.db_manager.disconnect()
             
-            self.logger.info("调度器已关闭")
+            self.logger.info("Scheduler stopped")
             
         except Exception as e:
             self.logger.error(f"调度器关闭失败: {e}")

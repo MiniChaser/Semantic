@@ -1,6 +1,6 @@
 """
-DBLP数据处理服务
-提供DBLP数据的下载、解析和处理功能
+DBLP data processing service
+Provides DBLP data download, parsing and processing functionality
 """
 
 import os
@@ -19,7 +19,7 @@ from ..utils.config import AppConfig
 
 @dataclass
 class DBLPProcessingStats:
-    """DBLP处理统计信息"""
+    """DBLP processing statistics"""
     total_papers: int = 0
     filtered_papers: int = 0
     errors: int = 0
@@ -31,14 +31,14 @@ class DBLPProcessingStats:
 
 
 class DBLPDownloader:
-    """DBLP数据下载器"""
+    """DBLP data downloader"""
     
     def __init__(self, config: AppConfig):
         self.config = config
         self.logger = self._setup_logger()
     
     def _setup_logger(self) -> logging.Logger:
-        """设置日志记录器"""
+        """Setup logger"""
         logger = logging.getLogger(f'{__name__}.DBLPDownloader')
         logger.setLevel(getattr(logging, self.config.log_level))
         
@@ -53,7 +53,7 @@ class DBLPDownloader:
         return logger
     
     def download_dblp_data(self, force_download: bool = False) -> bool:
-        """下载DBLP XML.gz文件"""
+        """Download DBLP XML.gz file"""
         try:
             # 创建下载目录
             os.makedirs(self.config.download_dir, exist_ok=True)
@@ -92,15 +92,15 @@ class DBLPDownloader:
                             f.write(chunk)
                             pbar.update(len(chunk))
             
-            self.logger.info(f"下载完成: {self.config.compressed_file}")
+            self.logger.info(f"Download completed: {self.config.compressed_file}")
             return True
             
         except Exception as e:
-            self.logger.error(f"下载失败: {e}")
+            self.logger.error(f"Download failed: {e}")
             return False
     
     def extract_xml(self, force_extract: bool = False) -> bool:
-        """解压XML.gz文件"""
+        """Extract XML.gz file"""
         try:
             if not os.path.exists(self.config.compressed_file):
                 self.logger.error("压缩文件不存在，请先下载")
@@ -132,15 +132,15 @@ class DBLPDownloader:
                             pbar.update(len(chunk))
             
             xml_size = os.path.getsize(self.config.xml_file)
-            self.logger.info(f"解压完成，XML文件大小: {xml_size / 1024 / 1024 / 1024:.2f} GB")
+            self.logger.info(f"Extraction completed，XML文件大小: {xml_size / 1024 / 1024 / 1024:.2f} GB")
             return True
             
         except Exception as e:
-            self.logger.error(f"解压失败: {e}")
+            self.logger.error(f"Extraction failed: {e}")
             return False
     
     def cleanup_files(self, keep_xml: bool = True):
-        """清理下载的文件"""
+        """Cleanup downloaded files"""
         try:
             if os.path.exists(self.config.compressed_file):
                 os.remove(self.config.compressed_file)
@@ -155,7 +155,7 @@ class DBLPDownloader:
 
 
 class DBLPParser:
-    """DBLP XML解析器"""
+    """DBLP XML parser"""
     
     def __init__(self, config: AppConfig):
         self.config = config
@@ -163,7 +163,7 @@ class DBLPParser:
         self.stats = DBLPProcessingStats()
     
     def _setup_logger(self) -> logging.Logger:
-        """设置日志记录器"""
+        """Setup logger"""
         logger = logging.getLogger(f'{__name__}.DBLPParser')
         logger.setLevel(getattr(logging, self.config.log_level))
         
@@ -179,7 +179,7 @@ class DBLPParser:
     
     def parse_xml(self, incremental: bool = False, 
                   existing_keys: Set[str] = None) -> List[Paper]:
-        """解析DBLP XML文件"""
+        """Parse DBLP XML file"""
         if not os.path.exists(self.config.xml_file):
             self.logger.error("XML文件不存在，请先下载并解压")
             return []
@@ -252,7 +252,7 @@ class DBLPParser:
                         papers.extend(batch_papers)
             
             self.logger.info(
-                f"解析完成: 总论文 {self.stats.total_papers}, "
+                f"Parsing completed: 总论文 {self.stats.total_papers}, "
                 f"筛选后 {self.stats.filtered_papers}, "
                 f"错误 {self.stats.errors}"
             )
@@ -260,11 +260,11 @@ class DBLPParser:
             return papers
             
         except Exception as e:
-            self.logger.error(f"XML解析失败: {e}")
+            self.logger.error(f"XML parsing failed: {e}")
             return []
     
     def _extract_paper_data(self, paper_elem) -> Optional[Paper]:
-        """提取单篇论文数据"""
+        """Extract single paper data"""
         try:
             # 获取会议信息
             key = paper_elem.attrib.get('key', '')
@@ -313,23 +313,23 @@ class DBLPParser:
             return paper
             
         except Exception as e:
-            self.logger.debug(f"提取论文数据时出错: {e}")
+            self.logger.debug(f"Extract paper data时出错: {e}")
             return None
     
     def _extract_text(self, element) -> Optional[str]:
-        """安全提取元素文本"""
+        """Safely extract element text"""
         if element is not None and element.text:
             return self._clean_text(element.text)
         return None
     
     def _clean_text(self, text: str) -> str:
-        """清理文本数据"""
+        """Clean text data"""
         if not text:
             return ""
         return text.strip().replace('\n', ' ').replace('\r', '')
     
     def _extract_doi(self, ee_element) -> Optional[str]:
-        """从ee元素中提取DOI"""
+        """Extract DOI from ee element"""
         if ee_element is None or not ee_element.text:
             return None
         
@@ -342,16 +342,16 @@ class DBLPParser:
         return None
     
     def get_stats(self) -> DBLPProcessingStats:
-        """获取处理统计信息"""
+        """Get processing statistics"""
         return self.stats
     
     def reset_stats(self):
-        """重置统计信息"""
+        """Reset statistics"""
         self.stats = DBLPProcessingStats()
 
 
 class DBLPService:
-    """DBLP数据处理服务"""
+    """DBLP data processing service"""
     
     def __init__(self, config: AppConfig):
         self.config = config
@@ -360,7 +360,7 @@ class DBLPService:
         self.parser = DBLPParser(config)
     
     def _setup_logger(self) -> logging.Logger:
-        """设置日志记录器"""
+        """Setup logger"""
         logger = logging.getLogger(f'{__name__}.DBLPService')
         logger.setLevel(getattr(logging, self.config.log_level))
         
@@ -390,17 +390,17 @@ class DBLPService:
         return logger
     
     def prepare_data(self, force_download: bool = False, force_extract: bool = False) -> bool:
-        """准备DBLP数据（下载和解压）"""
-        self.logger.info("开始准备DBLP数据...")
+        """Prepare DBLP data（下载和解压）"""
+        self.logger.info("开始Prepare DBLP data...")
         
-        # 步骤1: 下载数据
+        # Step 1: 下载数据
         if not self.downloader.download_dblp_data(force_download):
-            self.logger.error("数据下载失败")
+            self.logger.error("数据Download failed")
             return False
         
-        # 步骤2: 解压数据
+        # Step 2: 解压数据
         if not self.downloader.extract_xml(force_extract):
-            self.logger.error("数据解压失败")
+            self.logger.error("数据Extraction failed")
             return False
         
         self.logger.info("DBLP数据准备完成")
@@ -414,19 +414,19 @@ class DBLPService:
         papers = self.parser.parse_xml(incremental, existing_keys)
         stats = self.parser.get_stats()
         
-        self.logger.info(f"论文解析完成: {len(papers)} 篇论文")
+        self.logger.info(f"论文Parsing completed: {len(papers)} 篇论文")
         self.logger.info(f"统计信息: {stats}")
         
         return papers
     
     def cleanup(self, keep_xml: bool = True):
-        """清理下载的文件"""
+        """Cleanup downloaded files"""
         self.downloader.cleanup_files(keep_xml)
     
     def get_processing_stats(self) -> DBLPProcessingStats:
-        """获取处理统计信息"""
+        """Get processing statistics"""
         return self.parser.get_stats()
     
     def reset_stats(self):
-        """重置统计信息"""
+        """Reset statistics"""
         self.parser.reset_stats()

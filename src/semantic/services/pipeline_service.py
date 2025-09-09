@@ -34,7 +34,7 @@ class DataPipelineService:
         }
     
     def _setup_logger(self) -> logging.Logger:
-        """设置日志记录器"""
+        """Setup logger"""
         logger = logging.getLogger(f'{__name__}.DataPipelineService')
         logger.setLevel(getattr(logging, self.config.log_level))
         
@@ -51,7 +51,7 @@ class DataPipelineService:
     def step1_prepare_data(self) -> bool:
         """第一步：准备数据（下载和解压）"""
         try:
-            self.logger.info(f"[{datetime.now()}] 执行步骤1：准备DBLP数据")
+            self.logger.info(f"[{datetime.now()}] 执行Step 1：Prepare DBLP data")
             
             # 根据增量模式决定是否强制下载
             force_download = not self.config.enable_incremental
@@ -59,17 +59,17 @@ class DataPipelineService:
             if not self.dblp_service.prepare_data(force_download=force_download):
                 raise Exception("DBLP数据准备失败")
             
-            self.logger.info("步骤1完成：DBLP数据准备成功")
+            self.logger.info("Step 1完成：DBLP数据准备成功")
             return True
             
         except Exception as e:
-            self.logger.error(f"步骤1失败：{e}")
+            self.logger.error(f"Step 1失败：{e}")
             return False
     
     def step2_extract_papers(self) -> List[Paper]:
-        """第二步：提取论文数据"""
+        """第二步：Extract paper data"""
         try:
-            self.logger.info(f"[{datetime.now()}] 执行步骤2：提取论文数据")
+            self.logger.info(f"[{datetime.now()}] 执行Step 2：Extract paper data")
             
             papers = []
             existing_keys = set()
@@ -92,21 +92,21 @@ class DataPipelineService:
                 return []
             
             self.stats['papers_processed'] = len(papers)
-            self.logger.info(f"步骤2完成：提取到 {len(papers)} 篇论文")
+            self.logger.info(f"Step 2完成：提取到 {len(papers)} 篇论文")
             return papers
             
         except Exception as e:
-            self.logger.error(f"步骤2失败：{e}")
+            self.logger.error(f"Step 2失败：{e}")
             return []
     
     def step3_load_papers(self, papers: List[Paper]) -> bool:
-        """第三步：加载论文到数据库"""
+        """第三步：Load papers to database"""
         try:
             if not papers:
                 self.logger.info("没有论文需要加载")
                 return True
             
-            self.logger.info(f"[{datetime.now()}] 执行步骤3：加载 {len(papers)} 篇论文到数据库")
+            self.logger.info(f"[{datetime.now()}] 执行Step 3：加载 {len(papers)} 篇论文到数据库")
             
             # 确保数据库表存在
             if not self.paper_repo.create_tables():
@@ -121,18 +121,18 @@ class DataPipelineService:
             self.stats['errors'] = errors
             
             self.logger.info(
-                f"步骤3完成：插入 {inserted} 篇，更新 {updated} 篇，错误 {errors} 篇"
+                f"Step 3完成：插入 {inserted} 篇，更新 {updated} 篇，错误 {errors} 篇"
             )
             return True
             
         except Exception as e:
-            self.logger.error(f"步骤3失败：{e}")
+            self.logger.error(f"Step 3失败：{e}")
             return False
     
     def step4_post_process(self) -> bool:
-        """第四步：后处理（清理文件、记录元数据等）"""
+        """第四步：Post processing（清理文件、记录元数据等）"""
         try:
-            self.logger.info(f"[{datetime.now()}] 执行步骤4：后处理")
+            self.logger.info(f"[{datetime.now()}] 执行Step 4：Post processing")
             
             # 记录处理元数据
             success = self.stats['errors'] == 0
@@ -153,48 +153,48 @@ class DataPipelineService:
             else:
                 self.dblp_service.cleanup(keep_xml=True)
             
-            self.logger.info("步骤4完成：后处理完成")
+            self.logger.info("Step 4完成：Post processing完成")
             return True
             
         except Exception as e:
-            self.logger.error(f"步骤4失败：{e}")
+            self.logger.error(f"Step 4失败：{e}")
             return False
     
     def run_pipeline(self) -> bool:
         """运行整个数据管道"""
         self.start_time = datetime.now()
-        self.logger.info(f"\n[{self.start_time}] 开始执行数据管道")
+        self.logger.info(f"\n[{self.start_time}] Starting data pipeline execution")
         self.logger.info(f"处理模式: {'增量' if self.config.enable_incremental else '全量'}")
         
         try:
-            # 重置统计信息
+            # Reset statistics
             self._reset_stats()
             
-            # 步骤1: 准备数据
+            # Step 1: 准备数据
             if not self.step1_prepare_data():
                 raise Exception("数据准备失败")
             
-            # 步骤2: 提取论文
+            # Step 2: 提取论文
             papers = self.step2_extract_papers()
             if papers is None:  # 区分空列表和失败
                 raise Exception("论文提取失败")
             
-            # 步骤3: 加载论文
+            # Step 3: 加载论文
             if not self.step3_load_papers(papers):
                 raise Exception("论文加载失败")
             
-            # 步骤4: 后处理
+            # Step 4: Post processing
             if not self.step4_post_process():
-                raise Exception("后处理失败")
+                raise Exception("Post processing失败")
             
             # 生成最终报告
             self._generate_final_report()
             
-            self.logger.info(f"[{datetime.now()}] 数据管道执行成功")
+            self.logger.info(f"[{datetime.now()}] Data pipeline execution completed successfully")
             return True
             
         except Exception as e:
-            self.logger.error(f"[{datetime.now()}] 数据管道执行失败: {str(e)}")
+            self.logger.error(f"[{datetime.now()}] Data pipeline execution failed: {str(e)}")
             
             # 记录失败的元数据
             self.paper_repo.record_processing_meta(
@@ -216,7 +216,7 @@ class DataPipelineService:
                 cutoff_date = datetime.now() - timedelta(days=self.config.incremental_check_days)
                 query = """
                 SELECT key FROM dblp_papers 
-                WHERE updated_at >= %s OR created_at >= %s
+                WHERE update_time >= %s OR created_at >= %s
                 """
                 results = self.db_manager.fetch_all(query, (cutoff_date, cutoff_date))
             else:
@@ -231,7 +231,7 @@ class DataPipelineService:
             return set()
     
     def _reset_stats(self):
-        """重置统计信息"""
+        """Reset statistics"""
         self.stats = {
             'papers_processed': 0,
             'papers_inserted': 0,
