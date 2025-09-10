@@ -8,3 +8,4 @@ tests/
 tests_results/
 tests_results/
 *.pyc
+docs/
