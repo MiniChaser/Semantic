@@ -4,7 +4,7 @@ Application configuration management module
 
 import os
 from dataclasses import dataclass, field
-from typing import Set
+from typing import Set, Optional
 from dotenv import load_dotenv
 
 
@@ -35,6 +35,9 @@ class AppConfig:
     enable_incremental: bool = True
     incremental_check_days: int = 7  # Check data from last 7 days
     
+    # Semantic Scholar API configuration
+    semantic_scholar_api_key: Optional[str] = None
+    
     @classmethod
     def from_env(cls) -> 'AppConfig':
         """Create configuration from environment variables"""
@@ -64,7 +67,10 @@ class AppConfig:
             
             # Incremental processing configuration
             enable_incremental=os.getenv('ENABLE_INCREMENTAL', 'true').lower() == 'true',
-            incremental_check_days=int(os.getenv('INCREMENTAL_CHECK_DAYS', '7'))
+            incremental_check_days=int(os.getenv('INCREMENTAL_CHECK_DAYS', '7')),
+            
+            # Semantic Scholar API configuration
+            semantic_scholar_api_key=os.getenv('SEMANTIC_SCHOLAR_API_KEY')
         )
     
     def validate(self) -> bool:
