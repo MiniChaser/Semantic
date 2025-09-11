@@ -239,9 +239,8 @@ class EnrichedPaper:
     def get_quality_tier_summary(self) -> str:
         """Get human-readable summary of validation tier"""
         tier_descriptions = {
-            'Tier1_IDMatch': 'High Quality (ID Match)',
-            'Tier2_TitleMatch_High': 'Good Quality (High Title Similarity)',
-            'Tier2_TitleMatch_Medium': 'Medium Quality (Medium Title Similarity)',
+            'Tier2_TitleMatch_High': 'High Quality (High Title Similarity)',
+            'Tier2_TitleMatch_Medium': 'Medium Quality (Medium Title Similarity)', 
             'Tier3_NoMatch': 'DBLP Only (No S2 Match)'
         }
         return tier_descriptions.get(self.validation_tier, 'Unknown')

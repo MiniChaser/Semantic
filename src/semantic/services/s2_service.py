@@ -306,32 +306,10 @@ class S2ValidationService:
         
         return SequenceMatcher(None, clean1, clean2).ratio()
     
-    def calculate_id_match_confidence(self, original_paper: Dict, s2_data: Dict) -> float:
-        """Calculate confidence score for ID-based matches"""
-        confidence_factors = []
-        
-        # Title consistency
-        original_title = original_paper.get('title', '').strip()
-        s2_title = s2_data.get('title', '').strip()
-        if original_title and s2_title:
-            title_sim = self.calculate_title_similarity(original_title, s2_title)
-            confidence_factors.append(title_sim)
-        
-        # Year consistency
-        original_year = original_paper.get('year')
-        s2_year = s2_data.get('year')
-        if original_year and s2_year:
-            year_match = 1.0 if str(original_year) == str(s2_year) else 0.0
-            confidence_factors.append(year_match)
-        
-        # Return average confidence, or high confidence for ID matches if no other factors
-        return sum(confidence_factors) / len(confidence_factors) if confidence_factors else 0.95
     
     def determine_validation_tier(self, match_method: str, confidence: float) -> str:
         """Determine validation tier based on match method and confidence"""
-        if match_method == 'ID Match':
-            return 'Tier1_IDMatch'
-        elif match_method.startswith('Title Match'):
+        if match_method.startswith('Title Match'):
             if confidence >= 0.85:
                 return 'Tier2_TitleMatch_High'
             elif confidence >= 0.70:
