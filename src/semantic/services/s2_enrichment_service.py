@@ -17,23 +17,14 @@ from ..services.s2_service import SemanticScholarAPI, S2DataParser, S2Validation
 from ..utils.config import AppConfig
 
 
-class S2EnrichmentService:
-    """Service for enriching DBLP papers with Semantic Scholar data"""
+class ProcessingStatistics:
+    """Manages processing statistics for S2 enrichment"""
     
-    def __init__(self, config: AppConfig, db_manager: DatabaseManager = None, api_key: str = None):
-        self.config = config
-        self.db_manager = db_manager or get_db_manager()
-        self.enriched_repo = EnrichedPaperRepository(self.db_manager)
-        
-        # Load S2 API key from environment if not provided
-        self.api_key = api_key or os.getenv('SEMANTIC_SCHOLAR_API_KEY')
-        self.s2_api = SemanticScholarAPI(self.api_key)
-        self.s2_parser = S2DataParser()
-        self.validator = S2ValidationService()
-        
-        self.logger = self._setup_logger()
-        
-        # Processing statistics
+    def __init__(self):
+        self.reset()
+    
+    def reset(self):
+        """Reset all statistics to zero"""
         self.stats = {
             'papers_processed': 0,
             'papers_inserted': 0,
@@ -43,135 +34,32 @@ class S2EnrichmentService:
             'api_calls_made': 0,
             'errors': 0
         }
-        
-        self.start_time = None
     
-    def _setup_logger(self) -> logging.Logger:
-        """Setup logger"""
-        logger = logging.getLogger(f'{__name__}.S2EnrichmentService')
-        logger.setLevel(logging.INFO)
-        
-        if not logger.handlers:
-            handler = logging.StreamHandler()
-            formatter = logging.Formatter(
-                '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-            )
-            handler.setFormatter(formatter)
-            logger.addHandler(handler)
-        
-        return logger
+    def increment(self, stat_name: str, amount: int = 1):
+        """Increment a specific statistic"""
+        if stat_name in self.stats:
+            self.stats[stat_name] += amount
     
-    def setup_database(self) -> bool:
-        """Setup database tables for enriched papers"""
-        try:
-            self.logger.info("Setting up S2 enrichment database tables...")
-            return self.enriched_repo.create_tables()
-        except Exception as e:
-            self.logger.error(f"Database setup failed: {e}")
-            return False
+    def get_all(self) -> Dict[str, int]:
+        """Get all statistics"""
+        return self.stats.copy()
     
-    def enrich_papers(self, limit: int = None) -> bool:
-        """Main method to enrich papers with S2 data - processes each paper individually"""
-        self.start_time = datetime.now()
-        self.logger.info(f"Starting S2 enrichment process at {self.start_time}")
-        
-        try:
-            # Reset statistics
-            self.stats = {k: 0 for k in self.stats.keys()}
-            
-            # Step 1: Setup database
-            if not self.setup_database():
-                raise Exception("Database setup failed")
-            
-            # Step 2: Get papers needing enrichment
-            self.logger.info("Getting papers that need S2 enrichment...")
-            papers_to_enrich = self.enriched_repo.get_papers_needing_s2_enrichment(limit=limit)
-            
-            if not papers_to_enrich:
-                self.logger.info("No papers need S2 enrichment")
-                return True
-            
-            self.logger.info(f"Found {len(papers_to_enrich)} papers to enrich")
-            self.logger.info("Processing papers individually...")
-            
-            # Step 3: Process each paper individually
-            for i, (dblp_id, dblp_paper) in enumerate(papers_to_enrich, 1):
-                try:
-                    # Log progress
-                    if i % 10 == 0 or i == 1 or i == len(papers_to_enrich):
-                        self.logger.info(f"Processing paper {i}/{len(papers_to_enrich)}: {dblp_paper.title[:50]}...")
-                    
-                    # Process single paper
-                    success = self._process_single_paper(dblp_paper)
-                    
-                    if success:
-                        self.stats['papers_processed'] += 1
-                    else:
-                        self.stats['errors'] += 1
-                        
-                    # Small delay to avoid overwhelming the API
-                    if i % 100 == 0:  # Every 100 papers, take a longer break
-                        time.sleep(2)
-                    elif i % 10 == 0:  # Every 10 papers, take a short break
-                        time.sleep(0.5)
-                    else:
-                        time.sleep(0.1)  # Small delay between papers
-                        
-                except Exception as e:
-                    self.logger.error(f"Error processing paper {dblp_paper.key}: {e}")
-                    self.stats['errors'] += 1
-                    continue
-            
-            # Step 4: Record processing metadata
-            self._record_processing_metadata('success')
-            
-            # Step 5: Generate report
-            self._generate_enrichment_report()
-            
-            self.logger.info(f"S2 enrichment process completed successfully. Processed {self.stats['papers_processed']} papers with {self.stats['errors']} errors.")
-            return True
-            
-        except Exception as e:
-            self.logger.error(f"S2 enrichment process failed: {e}")
-            self._record_processing_metadata('failed', str(e))
-            return False
+    def get(self, stat_name: str) -> int:
+        """Get a specific statistic"""
+        return self.stats.get(stat_name, 0)
+
+
+class PaperProcessor:
+    """Handles the core paper processing logic"""
     
-    def _process_single_paper(self, dblp_paper: DBLP_Paper) -> bool:
-        """Process a single paper through the 2-tier enrichment process"""
-        try:
-            # Step 1: Try Tier 2 (title-based matching)
-            enriched_paper = self._try_tier2_matching(dblp_paper)
-            
-            # Step 2: If Tier 2 failed, create Tier 3 (no match)
-            if not enriched_paper:
-                enriched_paper = self._create_tier3_paper(dblp_paper)
-            
-            # Step 3: Save to database immediately
-            if enriched_paper:
-                # Check if paper already exists before inserting to determine operation type
-                existing_paper = self.enriched_repo.get_enriched_paper_by_dblp_id(dblp_paper.id)
-                is_update = existing_paper is not None
-                
-                success = self.enriched_repo.insert_enriched_paper(enriched_paper)
-                if success:
-                    if is_update:
-                        self.stats['papers_updated'] += 1
-                    else:
-                        self.stats['papers_inserted'] += 1
-                    return True
-                else:
-                    self.logger.error(f"Failed to save enriched paper {dblp_paper.key}")
-                    return False
-            else:
-                self.logger.error(f"Failed to create enriched paper for {dblp_paper.key}")
-                return False
-                
-        except Exception as e:
-            self.logger.error(f"Error processing single paper {dblp_paper.key}: {e}")
-            return False
+    def __init__(self, s2_api: SemanticScholarAPI, s2_parser: S2DataParser, 
+                 validator: S2ValidationService, logger: logging.Logger):
+        self.s2_api = s2_api
+        self.s2_parser = s2_parser
+        self.validator = validator
+        self.logger = logger
     
-    
-    def _try_tier2_matching(self, dblp_paper: DBLP_Paper) -> Optional[EnrichedPaper]:
+    def try_tier2_matching(self, dblp_paper: DBLP_Paper) -> Optional[EnrichedPaper]:
         """Try Tier 2 title-based matching for a single paper"""
         try:
             if not dblp_paper.title or not dblp_paper.title.strip():
@@ -179,7 +67,6 @@ class S2EnrichmentService:
             
             # Search by title
             s2_data = self.s2_api.search_paper_by_title(dblp_paper.title)
-            self.stats['api_calls_made'] += 1
             
             if s2_data:
                 # Calculate title similarity
@@ -211,7 +98,6 @@ class S2EnrichmentService:
                     enriched_paper.data_source_primary = 'S2+DBLP'
                     enriched_paper.data_completeness_score = self.validator.calculate_completeness_score(enriched_paper.to_dict())
                     
-                    self.stats['tier2_matches'] += 1
                     return enriched_paper
             
             return None
@@ -220,7 +106,7 @@ class S2EnrichmentService:
             self.logger.error(f"Tier 2 matching failed for {dblp_paper.key}: {e}")
             return None
     
-    def _create_tier3_paper(self, dblp_paper: DBLP_Paper) -> Optional[EnrichedPaper]:
+    def create_tier3_paper(self, dblp_paper: DBLP_Paper) -> Optional[EnrichedPaper]:
         """Create Tier 3 paper (no S2 match found)"""
         try:
             enriched_paper = EnrichedPaper()
@@ -233,36 +119,24 @@ class S2EnrichmentService:
             enriched_paper.data_source_primary = 'DBLP'
             enriched_paper.data_completeness_score = self.validator.calculate_completeness_score(enriched_paper.to_dict())
             
-            self.stats['tier3_no_matches'] += 1
             return enriched_paper
             
         except Exception as e:
             self.logger.error(f"Failed to create Tier 3 paper for {dblp_paper.key}: {e}")
             return None
+
+
+class EnrichmentReporter:
+    """Handles report generation and validation summaries"""
     
-    def _record_processing_metadata(self, status: str, error_message: str = None):
-        """Record processing metadata"""
-        duration = None
-        if self.start_time:
-            duration = int((datetime.now() - self.start_time).total_seconds())
-        
-        self.enriched_repo.record_s2_processing_meta(
-            process_type='s2_enrichment',
-            status=status,
-            records_processed=self.stats['papers_processed'],
-            records_inserted=self.stats['papers_inserted'],
-            records_updated=self.stats['papers_updated'],
-            records_tier2=self.stats['tier2_matches'],
-            records_tier3=self.stats['tier3_no_matches'],
-            api_calls_made=self.stats['api_calls_made'],
-            error_message=error_message,
-            execution_duration=duration
-        )
+    def __init__(self, enriched_repo: EnrichedPaperRepository, logger: logging.Logger):
+        self.enriched_repo = enriched_repo
+        self.logger = logger
     
-    def _generate_enrichment_report(self):
+    def generate_enrichment_report(self, stats: Dict[str, int], start_time: datetime):
         """Generate enrichment process report"""
         end_time = datetime.now()
-        duration = end_time - self.start_time if self.start_time else None
+        duration = end_time - start_time if start_time else None
         
         # Get overall statistics
         overall_stats = self.enriched_repo.get_enrichment_statistics()
@@ -271,13 +145,13 @@ class S2EnrichmentService:
         self.logger.info("S2 ENRICHMENT PROCESS COMPLETED")
         self.logger.info("=" * 80)
         self.logger.info(f"Processing time: {duration}")
-        self.logger.info(f"Papers processed: {self.stats['papers_processed']}")
-        self.logger.info(f"Papers inserted: {self.stats['papers_inserted']}")
-        self.logger.info(f"Papers updated: {self.stats['papers_updated']}")
-        self.logger.info(f"Tier 2 matches (Title): {self.stats['tier2_matches']}")
-        self.logger.info(f"Tier 3 no matches: {self.stats['tier3_no_matches']}")
-        self.logger.info(f"API calls made: {self.stats['api_calls_made']}")
-        self.logger.info(f"Errors: {self.stats['errors']}")
+        self.logger.info(f"Papers processed: {stats['papers_processed']}")
+        self.logger.info(f"Papers inserted: {stats['papers_inserted']}")
+        self.logger.info(f"Papers updated: {stats['papers_updated']}")
+        self.logger.info(f"Tier 2 matches (Title): {stats['tier2_matches']}")
+        self.logger.info(f"Tier 3 no matches: {stats['tier3_no_matches']}")
+        self.logger.info(f"API calls made: {stats['api_calls_made']}")
+        self.logger.info(f"Errors: {stats['errors']}")
         
         self.logger.info("\nOVERALL DATABASE STATISTICS:")
         self.logger.info(f"Total DBLP papers: {overall_stats.get('total_dblp_papers', 0)}")
@@ -292,24 +166,13 @@ class S2EnrichmentService:
             for tier, count in tier_dist.items():
                 self.logger.info(f"  {tier}: {count}")
     
-    def get_enrichment_statistics(self) -> Dict[str, Any]:
-        """Get current enrichment statistics"""
-        return self.enriched_repo.get_enrichment_statistics()
-    
-    def export_enriched_papers(self, output_path: str = "data/s2_enriched_papers.csv", 
-                              include_all_fields: bool = True) -> bool:
-        """Export enriched papers to CSV"""
-        return self.enriched_repo.export_to_csv(output_path, include_all_fields)
-    
-    def generate_validation_report(self, output_path: str = "data/s2_validation_report.json") -> bool:
+    def generate_validation_report(self, output_path: str, stats: Dict[str, int]) -> bool:
         """Generate detailed validation report as JSON file"""
         try:
-            import os
             import json
-            from datetime import datetime
             
             # Get statistics
-            stats = self.get_enrichment_statistics()
+            db_stats = self.enriched_repo.get_enrichment_statistics()
             
             # Get field completion rates
             field_completion = self._calculate_field_completion_rates()
@@ -320,37 +183,37 @@ class S2EnrichmentService:
             # Create report
             report = {
                 "generation_timestamp": datetime.now().isoformat(),
-                "total_papers": stats.get('total_dblp_papers', 0),
-                "enriched_papers": stats.get('total_enriched_papers', 0),
-                "enrichment_coverage_percentage": round(stats.get('enrichment_coverage', 0), 1),
-                "s2_match_success_rate": round(stats.get('s2_match_rate', 0), 1),
+                "total_papers": db_stats.get('total_dblp_papers', 0),
+                "enriched_papers": db_stats.get('total_enriched_papers', 0),
+                "enrichment_coverage_percentage": round(db_stats.get('enrichment_coverage', 0), 1),
+                "s2_match_success_rate": round(db_stats.get('s2_match_rate', 0), 1),
                 
                 "match_distribution": {
-                    tier: count for tier, count in stats.get('validation_tiers', {}).items()
+                    tier: count for tier, count in db_stats.get('validation_tiers', {}).items()
                 },
                 
                 "match_distribution_percentages": {
-                    tier: round(count / stats.get('total_enriched_papers', 1) * 100, 1) 
-                    for tier, count in stats.get('validation_tiers', {}).items()
+                    tier: round(count / db_stats.get('total_enriched_papers', 1) * 100, 1) 
+                    for tier, count in db_stats.get('validation_tiers', {}).items()
                 },
                 
                 "field_completion_rates": field_completion,
                 
                 "data_quality_summary": {
-                    "s2_match_success_rate": round(stats.get('s2_match_rate', 0), 1),
+                    "s2_match_success_rate": round(db_stats.get('s2_match_rate', 0), 1),
                     "field_enrichment_coverage": round(self._calculate_average_completeness(), 1),
-                    "high_confidence_matches": len([t for t in stats.get('validation_tiers', {}).keys() if 'High' in t]),
-                    "api_calls_efficiency": f"{stats.get('total_enriched_papers', 0)} papers with {self.stats.get('api_calls_made', 0)} API calls"
+                    "high_confidence_matches": len([t for t in db_stats.get('validation_tiers', {}).keys() if 'High' in t]),
+                    "api_calls_efficiency": f"{db_stats.get('total_enriched_papers', 0)} papers with {stats.get('api_calls_made', 0)} API calls"
                 },
                 
                 "processing_statistics": {
-                    "papers_processed": self.stats.get('papers_processed', 0),
-                    "papers_inserted": self.stats.get('papers_inserted', 0),
-                    "papers_updated": self.stats.get('papers_updated', 0),
-                    "tier2_matches": self.stats.get('tier2_matches', 0),
-                    "tier3_no_matches": self.stats.get('tier3_no_matches', 0),
-                    "api_calls_made": self.stats.get('api_calls_made', 0),
-                    "errors": self.stats.get('errors', 0)
+                    "papers_processed": stats.get('papers_processed', 0),
+                    "papers_inserted": stats.get('papers_inserted', 0),
+                    "papers_updated": stats.get('papers_updated', 0),
+                    "tier2_matches": stats.get('tier2_matches', 0),
+                    "tier3_no_matches": stats.get('tier3_no_matches', 0),
+                    "api_calls_made": stats.get('api_calls_made', 0),
+                    "errors": stats.get('errors', 0)
                 }
             }
             
@@ -378,7 +241,7 @@ class S2EnrichmentService:
                 'semantic_fields_of_study', 'semantic_paper_id'
             ]
             
-            total_papers = self.enriched_repo.db.fetch_one(
+            total_papers = self.enriched_repo.db_manager.fetch_one(
                 "SELECT COUNT(*) as count FROM enriched_papers"
             )['count']
             
@@ -389,12 +252,12 @@ class S2EnrichmentService:
             for field in key_fields:
                 # Handle different field types appropriately
                 if field in ['semantic_citation_count']:  # Integer fields
-                    result = self.enriched_repo.db.fetch_one(f"""
+                    result = self.enriched_repo.db_manager.fetch_one(f"""
                         SELECT COUNT(*) as count FROM enriched_papers 
                         WHERE {field} IS NOT NULL
                     """)
                 else:  # Text fields
-                    result = self.enriched_repo.db.fetch_one(f"""
+                    result = self.enriched_repo.db_manager.fetch_one(f"""
                         SELECT COUNT(*) as count FROM enriched_papers 
                         WHERE {field} IS NOT NULL AND {field} != ''
                     """)
@@ -409,7 +272,7 @@ class S2EnrichmentService:
     def _get_match_distribution_details(self) -> Dict[str, Any]:
         """Get detailed match distribution information"""
         try:
-            results = self.enriched_repo.db.fetch_all("""
+            results = self.enriched_repo.db_manager.fetch_all("""
                 SELECT 
                     validation_tier,
                     COUNT(*) as count,
@@ -437,7 +300,7 @@ class S2EnrichmentService:
     def _calculate_average_completeness(self) -> float:
         """Calculate average data completeness score"""
         try:
-            result = self.enriched_repo.db.fetch_one("""
+            result = self.enriched_repo.db_manager.fetch_one("""
                 SELECT AVG(data_completeness_score) as avg_score 
                 FROM enriched_papers
                 WHERE data_completeness_score IS NOT NULL
@@ -445,3 +308,236 @@ class S2EnrichmentService:
             return round(float(result['avg_score']) * 100 if result['avg_score'] else 0, 1)
         except:
             return 0.0
+
+
+class DatabaseSetupManager:
+    """Handles database setup and metadata recording"""
+    
+    def __init__(self, enriched_repo: EnrichedPaperRepository, logger: logging.Logger):
+        self.enriched_repo = enriched_repo
+        self.logger = logger
+    
+    def setup_database(self) -> bool:
+        """Setup database tables for enriched papers"""
+        try:
+            self.logger.info("Setting up S2 enrichment database tables...")
+            return self.enriched_repo.create_tables()
+        except Exception as e:
+            self.logger.error(f"Database setup failed: {e}")
+            return False
+    
+    def record_processing_metadata(self, status: str, stats: Dict[str, int], 
+                                 start_time: datetime, error_message: str = None):
+        """Record processing metadata"""
+        duration = None
+        if start_time:
+            duration = int((datetime.now() - start_time).total_seconds())
+        
+        self.enriched_repo.record_s2_processing_meta(
+            process_type='s2_enrichment',
+            status=status,
+            records_processed=stats['papers_processed'],
+            records_inserted=stats['papers_inserted'],
+            records_updated=stats['papers_updated'],
+            records_tier2=stats['tier2_matches'],
+            records_tier3=stats['tier3_no_matches'],
+            api_calls_made=stats['api_calls_made'],
+            error_message=error_message,
+            execution_duration=duration
+        )
+
+
+class S2EnrichmentService:
+    """Service for enriching DBLP papers with Semantic Scholar data"""
+    
+    def __init__(self, config: AppConfig, db_manager: DatabaseManager = None, api_key: str = None):
+        self.config = config
+        self.db_manager = db_manager or get_db_manager()
+        self.enriched_repo = EnrichedPaperRepository(self.db_manager)
+        
+        # Load S2 API key from environment if not provided
+        self.api_key = api_key or os.getenv('SEMANTIC_SCHOLAR_API_KEY')
+        self.s2_api = SemanticScholarAPI(self.api_key)
+        self.s2_parser = S2DataParser()
+        self.validator = S2ValidationService()
+        
+        self.logger = self._setup_logger()
+        
+        # Initialize component classes
+        self.statistics = ProcessingStatistics()
+        self.processor = PaperProcessor(self.s2_api, self.s2_parser, self.validator, self.logger)
+        self.reporter = EnrichmentReporter(self.enriched_repo, self.logger)
+        self.db_manager_component = DatabaseSetupManager(self.enriched_repo, self.logger)
+        
+        self.start_time = None
+        
+        # Maintain backward compatibility - expose stats as property
+        self.stats = self.statistics.get_all()
+    
+    def _setup_logger(self) -> logging.Logger:
+        """Setup logger"""
+        logger = logging.getLogger(f'{__name__}.S2EnrichmentService')
+        logger.setLevel(logging.INFO)
+        
+        if not logger.handlers:
+            handler = logging.StreamHandler()
+            formatter = logging.Formatter(
+                '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+            )
+            handler.setFormatter(formatter)
+            logger.addHandler(handler)
+        
+        return logger
+    
+    def setup_database(self) -> bool:
+        """Setup database tables for enriched papers"""
+        return self.db_manager_component.setup_database()
+    
+    def enrich_papers(self, limit: int = None) -> bool:
+        """Main method to enrich papers with S2 data - processes each paper individually"""
+        self.start_time = datetime.now()
+        self.logger.info(f"Starting S2 enrichment process at {self.start_time}")
+        
+        try:
+            # Reset statistics
+            self.statistics.reset()
+            self.stats = self.statistics.get_all()  # Maintain backward compatibility
+            
+            # Step 1: Setup database
+            if not self.setup_database():
+                raise Exception("Database setup failed")
+            
+            # Step 2: Get papers needing enrichment
+            self.logger.info("Getting papers that need S2 enrichment...")
+            papers_to_enrich = self.enriched_repo.get_papers_needing_s2_enrichment(limit=limit)
+            
+            if not papers_to_enrich:
+                self.logger.info("No papers need S2 enrichment")
+                return True
+            
+            self.logger.info(f"Found {len(papers_to_enrich)} papers to enrich")
+            self.logger.info("Processing papers individually...")
+            
+            # Step 3: Process each paper individually
+            for i, (dblp_id, dblp_paper) in enumerate(papers_to_enrich, 1):
+                try:
+                    # Log progress
+                    if i % 10 == 0 or i == 1 or i == len(papers_to_enrich):
+                        self.logger.info(f"Processing paper {i}/{len(papers_to_enrich)}: {dblp_paper.title[:50]}...")
+                    
+                    # Process single paper
+                    success = self._process_single_paper(dblp_paper)
+                    
+                    if success:
+                        self.statistics.increment('papers_processed')
+                    else:
+                        self.statistics.increment('errors')
+                        
+                    # Update stats for backward compatibility
+                    self.stats = self.statistics.get_all()
+                        
+                    # Small delay to avoid overwhelming the API
+                    if i % 100 == 0:  # Every 100 papers, take a longer break
+                        time.sleep(2)
+                    elif i % 10 == 0:  # Every 10 papers, take a short break
+                        time.sleep(0.5)
+                    else:
+                        time.sleep(0.1)  # Small delay between papers
+                        
+                except Exception as e:
+                    self.logger.error(f"Error processing paper {dblp_paper.key}: {e}")
+                    self.statistics.increment('errors')
+                    self.stats = self.statistics.get_all()  # Update stats
+                    continue
+            
+            # Step 4: Record processing metadata
+            self._record_processing_metadata('success')
+            
+            # Step 5: Generate report
+            self._generate_enrichment_report()
+            
+            current_stats = self.statistics.get_all()
+            self.logger.info(f"S2 enrichment process completed successfully. Processed {current_stats['papers_processed']} papers with {current_stats['errors']} errors.")
+            return True
+            
+        except Exception as e:
+            self.logger.error(f"S2 enrichment process failed: {e}")
+            self._record_processing_metadata('failed', str(e))
+            return False
+    
+    def _process_single_paper(self, dblp_paper: DBLP_Paper) -> bool:
+        """Process a single paper through the 2-tier enrichment process"""
+        try:
+            # Step 1: Try Tier 2 (title-based matching)
+            enriched_paper = self._try_tier2_matching(dblp_paper)
+            
+            # Step 2: If Tier 2 failed, create Tier 3 (no match)
+            if not enriched_paper:
+                enriched_paper = self._create_tier3_paper(dblp_paper)
+            
+            # Step 3: Save to database immediately
+            if enriched_paper:
+                # Check if paper already exists before inserting to determine operation type
+                existing_paper = self.enriched_repo.get_enriched_paper_by_dblp_id(dblp_paper.id)
+                is_update = existing_paper is not None
+                
+                success = self.enriched_repo.insert_enriched_paper(enriched_paper)
+                if success:
+                    if is_update:
+                        self.statistics.increment('papers_updated')
+                    else:
+                        self.statistics.increment('papers_inserted')
+                    return True
+                else:
+                    self.logger.error(f"Failed to save enriched paper {dblp_paper.key}")
+                    return False
+            else:
+                self.logger.error(f"Failed to create enriched paper for {dblp_paper.key}")
+                return False
+                
+        except Exception as e:
+            self.logger.error(f"Error processing single paper {dblp_paper.key}: {e}")
+            return False
+    
+    def _try_tier2_matching(self, dblp_paper: DBLP_Paper) -> Optional[EnrichedPaper]:
+        """Try Tier 2 title-based matching for a single paper"""
+        result = self.processor.try_tier2_matching(dblp_paper)
+        if result:
+            self.statistics.increment('api_calls_made')
+            self.statistics.increment('tier2_matches')
+        else:
+            self.statistics.increment('api_calls_made')
+        return result
+    
+    def _create_tier3_paper(self, dblp_paper: DBLP_Paper) -> Optional[EnrichedPaper]:
+        """Create Tier 3 paper (no S2 match found)"""
+        result = self.processor.create_tier3_paper(dblp_paper)
+        if result:
+            self.statistics.increment('tier3_no_matches')
+        return result
+    
+    def _record_processing_metadata(self, status: str, error_message: str = None):
+        """Record processing metadata"""
+        current_stats = self.statistics.get_all()
+        self.db_manager_component.record_processing_metadata(
+            status, current_stats, self.start_time, error_message
+        )
+    
+    def _generate_enrichment_report(self):
+        """Generate enrichment process report"""
+        current_stats = self.statistics.get_all()
+        self.reporter.generate_enrichment_report(current_stats, self.start_time)
+    
+    def get_enrichment_statistics(self) -> Dict[str, Any]:
+        """Get current enrichment statistics"""
+        return self.enriched_repo.get_enrichment_statistics()
+    
+    def export_enriched_papers(self, output_path: str = "data/s2_enriched_papers.csv", 
+                              include_all_fields: bool = True) -> bool:
+        """Export enriched papers to CSV"""
+        return self.enriched_repo.export_to_csv(output_path, include_all_fields)
+    
+    def generate_validation_report(self, output_path: str = "data/s2_validation_report.json") -> bool:
+        """Generate detailed validation report as JSON file"""
+        current_stats = self.statistics.get_all()
+        return self.reporter.generate_validation_report(output_path, current_stats)
