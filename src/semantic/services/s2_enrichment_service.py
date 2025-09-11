@@ -1,6 +1,6 @@
 """
 Semantic Scholar Enrichment Service
-Main service for enriching papers with S2 data using 3-tier validation strategy
+Main service for enriching papers with S2 data using 2-tier validation strategy
 """
 
 import os
@@ -38,7 +38,6 @@ class S2EnrichmentService:
             'papers_processed': 0,
             'papers_inserted': 0,
             'papers_updated': 0,
-            'tier1_matches': 0,
             'tier2_matches': 0,
             'tier3_no_matches': 0,
             'api_calls_made': 0,
@@ -138,20 +137,16 @@ class S2EnrichmentService:
             return False
     
     def _process_single_paper(self, dblp_id: int, dblp_paper: DBLP_Paper) -> bool:
-        """Process a single paper through the 3-tier enrichment process"""
+        """Process a single paper through the 2-tier enrichment process"""
         try:
-            # Step 1: Try Tier 1 (ID-based matching)
-            enriched_paper = self._try_tier1_matching(dblp_id, dblp_paper)
+            # Step 1: Try Tier 2 (title-based matching)
+            enriched_paper = self._try_tier2_matching(dblp_id, dblp_paper)
             
-            # Step 2: If Tier 1 failed, try Tier 2 (title matching)
-            if not enriched_paper:
-                enriched_paper = self._try_tier2_matching(dblp_id, dblp_paper)
-            
-            # Step 3: If both failed, create Tier 3 (no match)
+            # Step 2: If Tier 2 failed, create Tier 3 (no match)
             if not enriched_paper:
                 enriched_paper = self._create_tier3_paper(dblp_id, dblp_paper)
             
-            # Step 4: Save to database immediately
+            # Step 3: Save to database immediately
             if enriched_paper:
                 # Check if paper already exists before inserting to determine operation type
                 existing_paper = self.enriched_repo.get_enriched_paper_by_dblp_id(dblp_id)
@@ -175,55 +170,6 @@ class S2EnrichmentService:
             self.logger.error(f"Error processing single paper {dblp_paper.key}: {e}")
             return False
     
-    def _try_tier1_matching(self, dblp_id: int, dblp_paper: DBLP_Paper) -> Optional[EnrichedPaper]:
-        """Try Tier 1 ID-based matching for a single paper"""
-        try:
-            # Extract paper identifier
-            paper_id = None
-            
-            # First try DOI (more reliable)
-            if dblp_paper.doi and dblp_paper.doi.strip():
-                paper_id = f"DOI:{dblp_paper.doi.strip()}"
-            # Then try using paper key as ACL ID for ACL papers
-            elif dblp_paper.key and any(venue in dblp_paper.key.lower() for venue in ['acl', 'naacl', 'emnlp', 'findings']):
-                # For our test data, the key IS the ACL ID (e.g., P79-1001)
-                if dblp_paper.key.startswith('P') or dblp_paper.key.startswith('D') or dblp_paper.key.startswith('N'):
-                    paper_id = f"ACL:{dblp_paper.key}"
-            
-            if not paper_id:
-                return None
-            
-            # Make API call for this specific paper
-            s2_results = self.s2_api.batch_get_papers([paper_id])
-            self.stats['api_calls_made'] += 1
-            
-            if s2_results and len(s2_results) > 0 and s2_results[0]:
-                s2_data = s2_results[0]
-                confidence = self.validator.calculate_id_match_confidence(dblp_paper.to_dict(), s2_data)
-                
-                # Create enriched paper
-                enriched_paper = EnrichedPaper()
-                enriched_paper.merge_dblp_data(dblp_paper)
-                
-                # Parse and merge S2 data
-                parsed_s2_data = self.s2_parser.parse_s2_response(s2_data)
-                enriched_paper.merge_s2_data(parsed_s2_data)
-                
-                # Set validation metadata
-                enriched_paper.match_method = 'ID Match'
-                enriched_paper.match_confidence = confidence
-                enriched_paper.validation_tier = 'Tier1_IDMatch'
-                enriched_paper.data_source_primary = 'S2+DBLP'
-                enriched_paper.data_completeness_score = self.validator.calculate_completeness_score(enriched_paper.to_dict())
-                
-                self.stats['tier1_matches'] += 1
-                return enriched_paper
-            
-            return None
-            
-        except Exception as e:
-            self.logger.error(f"Tier 1 matching failed for {dblp_paper.key}: {e}")
-            return None
     
     def _try_tier2_matching(self, dblp_id: int, dblp_paper: DBLP_Paper) -> Optional[EnrichedPaper]:
         """Try Tier 2 title-based matching for a single paper"""
@@ -306,7 +252,6 @@ class S2EnrichmentService:
             records_processed=self.stats['papers_processed'],
             records_inserted=self.stats['papers_inserted'],
             records_updated=self.stats['papers_updated'],
-            records_tier1=self.stats['tier1_matches'],
             records_tier2=self.stats['tier2_matches'],
             records_tier3=self.stats['tier3_no_matches'],
             api_calls_made=self.stats['api_calls_made'],
@@ -329,7 +274,6 @@ class S2EnrichmentService:
         self.logger.info(f"Papers processed: {self.stats['papers_processed']}")
         self.logger.info(f"Papers inserted: {self.stats['papers_inserted']}")
         self.logger.info(f"Papers updated: {self.stats['papers_updated']}")
-        self.logger.info(f"Tier 1 matches (ID): {self.stats['tier1_matches']}")
         self.logger.info(f"Tier 2 matches (Title): {self.stats['tier2_matches']}")
         self.logger.info(f"Tier 3 no matches: {self.stats['tier3_no_matches']}")
         self.logger.info(f"API calls made: {self.stats['api_calls_made']}")
@@ -395,7 +339,7 @@ class S2EnrichmentService:
                 "data_quality_summary": {
                     "s2_match_success_rate": round(stats.get('s2_match_rate', 0), 1),
                     "field_enrichment_coverage": round(self._calculate_average_completeness(), 1),
-                    "high_confidence_matches": len([t for t in stats.get('validation_tiers', {}).keys() if 'Tier1' in t or 'High' in t]),
+                    "high_confidence_matches": len([t for t in stats.get('validation_tiers', {}).keys() if 'High' in t]),
                     "api_calls_efficiency": f"{stats.get('total_enriched_papers', 0)} papers with {self.stats.get('api_calls_made', 0)} API calls"
                 },
                 
@@ -403,7 +347,6 @@ class S2EnrichmentService:
                     "papers_processed": self.stats.get('papers_processed', 0),
                     "papers_inserted": self.stats.get('papers_inserted', 0),
                     "papers_updated": self.stats.get('papers_updated', 0),
-                    "tier1_matches": self.stats.get('tier1_matches', 0),
                     "tier2_matches": self.stats.get('tier2_matches', 0),
                     "tier3_no_matches": self.stats.get('tier3_no_matches', 0),
                     "api_calls_made": self.stats.get('api_calls_made', 0),
