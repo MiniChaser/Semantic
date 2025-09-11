@@ -6,9 +6,9 @@ Provides unified database connection and configuration management
 import os
 import logging
 import psycopg2
-from psycopg2.extras import RealDictCursor
+from psycopg2.extras import RealDictCursor, Json
 from contextlib import contextmanager
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 from dotenv import load_dotenv
 
 
@@ -117,35 +117,57 @@ class DatabaseManager:
             self.logger.error(f"Connection test failed: {e}")
             return False
     
-    def execute_query(self, query: str, params: tuple = None) -> bool:
+    def execute_query(self, query: str, params = None) -> bool:
         """Execute SQL query"""
         try:
             with self.get_cursor() as cursor:
-                cursor.execute(query, params)
+                # Convert dict/list parameters to Json objects for JSONB compatibility
+                processed_params = self._process_json_params(params) if params else None
+                cursor.execute(query, processed_params)
                 return True
         except Exception as e:
             self.logger.error(f"Query execution failed: {e}")
             return False
     
-    def fetch_one(self, query: str, params: tuple = None) -> Optional[Dict]:
+    def fetch_one(self, query: str, params = None) -> Optional[Dict]:
         """Execute query and return single record"""
         try:
             with self.get_cursor() as cursor:
-                cursor.execute(query, params)
+                processed_params = self._process_json_params(params) if params else None
+                cursor.execute(query, processed_params)
                 return cursor.fetchone()
         except Exception as e:
             self.logger.error(f"Query execution failed: {e}")
             return None
     
-    def fetch_all(self, query: str, params: tuple = None) -> list:
+    def fetch_all(self, query: str, params = None) -> list:
         """Execute query and return all records"""
         try:
             with self.get_cursor() as cursor:
-                cursor.execute(query, params)
+                processed_params = self._process_json_params(params) if params else None
+                cursor.execute(query, processed_params)
                 return cursor.fetchall()
         except Exception as e:
             self.logger.error(f"Query execution failed: {e}")
             return []
+    
+    def _process_json_params(self, params):
+        """Process parameters to handle JSON objects for JSONB compatibility"""
+        if not params:
+            return params
+            
+        processed = []
+        # Handle both lists and tuples
+        param_list = params if isinstance(params, (list, tuple)) else [params]
+        
+        for param in param_list:
+            if isinstance(param, (dict, list)):
+                processed.append(Json(param))
+            else:
+                processed.append(param)
+        
+        # Return same type as input
+        return tuple(processed) if isinstance(params, tuple) else processed
     
     def __enter__(self):
         """Support for with statement"""

@@ -106,14 +106,9 @@ class EnrichedPaper:
             if data.get(field) and isinstance(data[field], datetime):
                 data[field] = data[field].isoformat()
         
-        # Handle JSON fields that need string representation for database
-        json_fields = ['dblp_authors', 'semantic_authors', 'semantic_fields_of_study', 
-                      'semantic_external_ids', 'semantic_full_data', 'author_affiliations', 
-                      'author_contacts']
-        
-        for field in json_fields:
-            if data.get(field) is not None:
-                data[field] = json.dumps(data[field], ensure_ascii=False)
+        # Keep JSON fields as Python objects for JSONB columns
+        # PostgreSQL JSONB columns handle the JSON conversion automatically
+        # No need to manually convert to JSON strings
         
         return data
     
