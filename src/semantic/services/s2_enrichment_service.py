@@ -102,7 +102,7 @@ class S2EnrichmentService:
                         self.logger.info(f"Processing paper {i}/{len(papers_to_enrich)}: {dblp_paper.title[:50]}...")
                     
                     # Process single paper
-                    success = self._process_single_paper(dblp_id, dblp_paper)
+                    success = self._process_single_paper(dblp_paper)
                     
                     if success:
                         self.stats['papers_processed'] += 1
@@ -136,20 +136,20 @@ class S2EnrichmentService:
             self._record_processing_metadata('failed', str(e))
             return False
     
-    def _process_single_paper(self, dblp_id: int, dblp_paper: DBLP_Paper) -> bool:
+    def _process_single_paper(self, dblp_paper: DBLP_Paper) -> bool:
         """Process a single paper through the 2-tier enrichment process"""
         try:
             # Step 1: Try Tier 2 (title-based matching)
-            enriched_paper = self._try_tier2_matching(dblp_id, dblp_paper)
+            enriched_paper = self._try_tier2_matching(dblp_paper)
             
             # Step 2: If Tier 2 failed, create Tier 3 (no match)
             if not enriched_paper:
-                enriched_paper = self._create_tier3_paper(dblp_id, dblp_paper)
+                enriched_paper = self._create_tier3_paper(dblp_paper)
             
             # Step 3: Save to database immediately
             if enriched_paper:
                 # Check if paper already exists before inserting to determine operation type
-                existing_paper = self.enriched_repo.get_enriched_paper_by_dblp_id(dblp_id)
+                existing_paper = self.enriched_repo.get_enriched_paper_by_dblp_id(dblp_paper.id)
                 is_update = existing_paper is not None
                 
                 success = self.enriched_repo.insert_enriched_paper(enriched_paper)
@@ -171,7 +171,7 @@ class S2EnrichmentService:
             return False
     
     
-    def _try_tier2_matching(self, dblp_id: int, dblp_paper: DBLP_Paper) -> Optional[EnrichedPaper]:
+    def _try_tier2_matching(self, dblp_paper: DBLP_Paper) -> Optional[EnrichedPaper]:
         """Try Tier 2 title-based matching for a single paper"""
         try:
             if not dblp_paper.title or not dblp_paper.title.strip():
@@ -220,7 +220,7 @@ class S2EnrichmentService:
             self.logger.error(f"Tier 2 matching failed for {dblp_paper.key}: {e}")
             return None
     
-    def _create_tier3_paper(self, dblp_id: int, dblp_paper: DBLP_Paper) -> Optional[EnrichedPaper]:
+    def _create_tier3_paper(self, dblp_paper: DBLP_Paper) -> Optional[EnrichedPaper]:
         """Create Tier 3 paper (no S2 match found)"""
         try:
             enriched_paper = EnrichedPaper()
