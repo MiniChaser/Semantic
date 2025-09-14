@@ -27,6 +27,7 @@ class AuthorMatcher:
     def normalize_name(self, name: str) -> str:
         """
         Comprehensive name normalization for cross-platform matching
+        Handles: numeric suffixes, special characters, abbreviations, punctuation
         
         Args:
             name: Raw author name string
@@ -43,18 +44,29 @@ class AuthorMatcher:
             if len(parts) == 2:
                 name = f"{parts[1].strip()} {parts[0].strip()}"
         
+        # Remove DBLP numeric suffixes (e.g., "0001", "0004") - CRITICAL FIX
+        name = re.sub(r'\s+\d{4}$', '', name)
+        
+        # Remove other numeric disambiguation patterns
+        name = re.sub(r'\s+\d{1,3}$', '', name)  # Handle 1-3 digit suffixes
+        
         # Unicode normalization and lowercase
         name = unidecode(name).lower()
         
-        # Remove common academic suffixes
-        suffixes = ['jr', 'sr', 'phd', 'md', 'iii', 'ii', 'iv', 'esq', 'dr', 'prof']
+        # Remove common academic suffixes and titles
+        suffixes = ['jr', 'sr', 'phd', 'md', 'iii', 'ii', 'iv', 'v', 'esq', 'dr', 'prof', 'professor']
         name_parts = name.split()
         filtered_parts = [part for part in name_parts if part not in suffixes]
         name = ' '.join(filtered_parts)
         
         # Standardize punctuation and whitespace
         name = name.replace('-', ' ')
-        name = re.sub(r'[^\w\s]', '', name)
+        name = name.replace('_', ' ')
+        
+        # Remove all punctuation except dots (for initials)
+        name = re.sub(r'[^\w\s\.]', '', name)
+        
+        # Normalize multiple spaces
         name = re.sub(r'\s+', ' ', name).strip()
         
         return name
@@ -130,23 +142,47 @@ class AuthorMatcher:
             remaining_s2.remove(norm_name)
             self.match_stats['exact_matches'] += 1
         
-        # Tier 2: Initialism matching (F. Last <-> FirstName Last)
+        # Tier 2: Enhanced initialism matching (F. Last <-> FirstName Last)
         for dblp_norm in list(remaining_dblp):
             dblp_parts = dblp_norm.split()
             if len(dblp_parts) >= 2:
-                # Create initialism: F + Last
-                dblp_initials = ''.join(part[0] for part in dblp_parts[:-1]) + ' ' + dblp_parts[-1]
+                # Create multiple initialism patterns
+                dblp_patterns = []
+                
+                # Pattern 1: F Last (first initial + last name)
+                dblp_patterns.append(''.join(part[0] for part in dblp_parts[:-1]) + ' ' + dblp_parts[-1])
+                
+                # Pattern 2: F. Last (with dots)
+                dblp_patterns.append('.'.join(part[0] for part in dblp_parts[:-1]) + '. ' + dblp_parts[-1])
+                
+                # Pattern 3: Handle middle initials (F M Last -> F. M. Last)
+                if len(dblp_parts) > 2:
+                    dblp_patterns.append(' '.join(part[0] + '.' for part in dblp_parts[:-1]) + ' ' + dblp_parts[-1])
                 
                 for s2_norm in list(remaining_s2):
                     s2_parts = s2_norm.split()
                     if len(s2_parts) >= 2:
-                        s2_initials = ''.join(part[0] for part in s2_parts[:-1]) + ' ' + s2_parts[-1]
+                        # Create S2 patterns
+                        s2_patterns = []
+                        s2_patterns.append(''.join(part[0] for part in s2_parts[:-1]) + ' ' + s2_parts[-1])
+                        s2_patterns.append('.'.join(part[0] for part in s2_parts[:-1]) + '. ' + s2_parts[-1])
+                        if len(s2_parts) > 2:
+                            s2_patterns.append(' '.join(part[0] + '.' for part in s2_parts[:-1]) + ' ' + s2_parts[-1])
                         
-                        if dblp_initials == s2_initials:
-                            matched[dblp_normalized[dblp_norm]] = s2_normalized[s2_norm]
-                            remaining_dblp.remove(dblp_norm)
-                            remaining_s2.remove(s2_norm)
-                            self.match_stats['initialism_matches'] += 1
+                        # Cross-match all patterns
+                        pattern_matched = False
+                        for dblp_pattern in dblp_patterns:
+                            for s2_pattern in s2_patterns:
+                                if dblp_pattern == s2_pattern:
+                                    matched[dblp_normalized[dblp_norm]] = s2_normalized[s2_norm]
+                                    remaining_dblp.remove(dblp_norm)
+                                    remaining_s2.remove(s2_norm)
+                                    self.match_stats['initialism_matches'] += 1
+                                    pattern_matched = True
+                                    break
+                            if pattern_matched:
+                                break
+                        if pattern_matched:
                             break
         
         # Tier 3: Structural interpretation matching
@@ -172,15 +208,23 @@ class AuthorMatcher:
                 if matched_interpretation:
                     break
         
-        # Tier 4: Fuzzy string matching (high threshold)
+        # Tier 4: Enhanced fuzzy string matching with multiple algorithms
         for dblp_norm in list(remaining_dblp):
             best_match = None
             best_score = 0
             
             for s2_norm in list(remaining_s2):
-                score = fuzz.token_sort_ratio(dblp_norm, s2_norm)
-                if score > 90 and score > best_score:
-                    best_score = score
+                # Use multiple fuzzy matching algorithms
+                token_sort_score = fuzz.token_sort_ratio(dblp_norm, s2_norm)
+                token_set_score = fuzz.token_set_ratio(dblp_norm, s2_norm)
+                partial_score = fuzz.partial_ratio(dblp_norm, s2_norm)
+                
+                # Take the maximum of different algorithms
+                combined_score = max(token_sort_score, token_set_score, partial_score)
+                
+                # Lower threshold for better recall, but still high enough for precision
+                if combined_score > 85 and combined_score > best_score:
+                    best_score = combined_score
                     best_match = s2_norm
             
             if best_match:
@@ -189,7 +233,24 @@ class AuthorMatcher:
                 remaining_s2.remove(best_match)
                 self.match_stats['fuzzy_matches'] += 1
         
-        # Tier 5: Unique initial matching for single letters
+        # Tier 5: Abbreviation and initial variants matching
+        for dblp_norm in list(remaining_dblp):
+            matched_variant = False  # Move this outside the inner loop
+            
+            for s2_norm in list(remaining_s2):
+                # Check if one is an abbreviation of the other
+                if self._is_abbreviation_match(dblp_norm, s2_norm):
+                    matched[dblp_normalized[dblp_norm]] = s2_normalized[s2_norm]
+                    remaining_dblp.remove(dblp_norm)
+                    remaining_s2.remove(s2_norm)
+                    self.match_stats['initialism_matches'] += 1
+                    matched_variant = True
+                    break
+            
+            if matched_variant:
+                break
+        
+        # Tier 6: Unique initial matching for single letters
         for dblp_norm in list(remaining_dblp):
             dblp_parts = dblp_norm.split()
             if len(dblp_parts) == 1 and len(dblp_parts[0]) == 1:
@@ -207,7 +268,7 @@ class AuthorMatcher:
                     remaining_s2.remove(matching_s2[0])
                     self.match_stats['unique_initial_matches'] += 1
         
-        # Tier 6: Positional fallback (last resort)
+        # Tier 7: Positional fallback (last resort)
         if len(remaining_dblp) == 1 and len(remaining_s2) == 1:
             dblp_norm = list(remaining_dblp)[0]
             s2_norm = list(remaining_s2)[0]
@@ -223,6 +284,40 @@ class AuthorMatcher:
         unmatched = [dblp_normalized[norm] for norm in remaining_dblp]
         
         return matched, unmatched
+    
+    def _is_abbreviation_match(self, name1: str, name2: str) -> bool:
+        """
+        Check if one name is an abbreviation variant of another
+        Handles cases like: "j. smith" <-> "john smith", "e. yamamoto" <-> "eiko yamamoto"
+        """
+        parts1 = name1.split()
+        parts2 = name2.split()
+        
+        if len(parts1) != len(parts2):
+            return False
+        
+        for p1, p2 in zip(parts1, parts2):
+            # Remove dots for comparison
+            p1_clean = p1.replace('.', '')
+            p2_clean = p2.replace('.', '')
+            
+            # If both are single characters, they should match
+            if len(p1_clean) == 1 and len(p2_clean) == 1:
+                if p1_clean != p2_clean:
+                    return False
+            # If one is single char and other is full word, check initial
+            elif len(p1_clean) == 1:
+                if p1_clean != p2_clean[0]:
+                    return False
+            elif len(p2_clean) == 1:
+                if p2_clean != p1_clean[0]:
+                    return False
+            # If both are full words, they should be exactly the same
+            else:
+                if p1_clean != p2_clean:
+                    return False
+        
+        return True
     
     def get_match_statistics(self) -> Dict:
         """Get comprehensive matching statistics"""
