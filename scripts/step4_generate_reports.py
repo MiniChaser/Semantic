@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Author Processing Step 5: Generate Reports
+Author Processing Step 4: Generate Reports
 Generates comprehensive reports and statistics for the Phase 1 implementation
 """
 
@@ -17,7 +17,6 @@ sys.path.insert(0, str(Path(__file__).parent.parent / 'src'))
 from semantic.utils.config import AppConfig
 from semantic.database.connection import get_db_manager
 from semantic.services.author_service.author_profile_service import AuthorProfileService
-from semantic.services.author_service.author_metrics_service import AuthorMetricsService
 from semantic.services.author_service.final_author_table_service import FinalAuthorTableService
 
 
@@ -42,15 +41,15 @@ def setup_logging():
         format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
         handlers=[
             logging.StreamHandler(),
-            logging.FileHandler(log_dir / 'step5_generate_reports.log')
+            logging.FileHandler(log_dir / 'step4_generate_reports.log')
         ]
     )
 
 
 def main():
-    """Execute Step 5: Generate Reports"""
+    """Execute Step 4: Generate Reports"""
     
-    print("📊 Step 5: Generating Reports")
+    print("📊 Step 4: Generating Reports")
     print("=" * 40)
     
     try:
@@ -66,7 +65,6 @@ def main():
         
         # Initialize services
         profile_service = AuthorProfileService(db_manager)
-        metrics_service = AuthorMetricsService(db_manager)
         final_table_service = FinalAuthorTableService(db_manager)
         
         # Create reports directory
@@ -80,7 +78,12 @@ def main():
         
         # Get comprehensive statistics
         processing_stats = profile_service.get_processing_statistics()
-        metrics_stats = metrics_service.get_metrics_statistics()
+        
+        # Simplified metrics stats (no intermediate metrics service)
+        metrics_stats = {
+            'message': 'Metrics computed directly in final_author_table',
+            'approach': 'simplified_direct_calculation'
+        }
         
         # Generate comprehensive Phase 1 report
         phase1_report = {
@@ -91,28 +94,23 @@ def main():
             'phase_completion_status': {
                 'authorships_table': 'completed',
                 'author_profiles_table': 'completed',
-                'collaboration_metrics': 'completed',
-                'rising_star_metrics': 'completed',
-                'comprehensive_rankings': 'completed',
-                'final_author_table': 'completed'
+                'intermediate_metrics': 'skipped (simplified approach)',
+                'final_author_table': 'completed with direct calculations'
             },
             'database_tables_created': [
                 'authorships - Paper-author relationships',
                 'author_profiles - Unique author profiles', 
-                'author_collaboration_metrics - Collaboration networks',
-                'author_rising_star_metrics - Rising star analysis',
-                'author_comprehensive_rankings - Multi-dimensional rankings',
-                'final_author_table - Target output table'
+                'final_author_table - Target output table with computed metrics'
             ],
             'implementation_notes': {
                 'phase_1_completed_features': [
-                    'Multi-tier author disambiguation (6 tiers)',
+                    'Multi-tier author disambiguation',
                     'Paper-author relationship mapping',
                     'Unique author profile creation',
-                    'Collaboration network analysis',
-                    'Rising star detection algorithm',
-                    'Comprehensive ranking system',
+                    'H-index calculation directly in final table',
+                    'Citation metrics aggregation',
                     'DBLP alias extraction using 4-digit pattern',
+                    'Simplified direct calculation approach',
                     'Final table matching document specifications'
                 ],
                 'phase_2_todo_items': [
@@ -145,7 +143,7 @@ def main():
         
     except Exception as e:
         print(f"❌ Critical error: {e}")
-        logging.getLogger(__name__).error(f"Step 5 failed: {e}", exc_info=True)
+        logging.getLogger(__name__).error(f"Step 4 failed: {e}", exc_info=True)
         return 1
 
 

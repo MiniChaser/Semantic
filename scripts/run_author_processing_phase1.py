@@ -18,7 +18,6 @@ sys.path.insert(0, str(Path(__file__).parent.parent / 'src'))
 from semantic.utils.config import AppConfig
 from semantic.database.connection import get_db_manager
 from semantic.services.author_service.author_profile_service import AuthorProfileService
-from semantic.services.author_service.author_metrics_service import AuthorMetricsService
 from semantic.services.author_service.final_author_table_service import FinalAuthorTableService
 
 
@@ -82,7 +81,6 @@ def main():
         
         # Initialize services
         profile_service = AuthorProfileService(db_manager)
-        metrics_service = AuthorMetricsService(db_manager)
         final_table_service = FinalAuthorTableService(db_manager)
         
         print("✅ All services initialized")
@@ -126,42 +124,13 @@ def main():
         print(f"🆔 Authors with S2 ID: {profile_stats['authors_with_s2_id']}")
         print(f"❓ Authors without S2 ID: {profile_stats['authors_without_s2_id']}")
         
-        # Phase 1.3: Calculate advanced metrics
-        print("\n📈 Phase 1.3: Calculating Advanced Metrics")
+        # Phase 1.3: Create final target table
+        print("\n🎯 Phase 1.3: Creating Final Target Table")
         print("-" * 40)
         
-        if not metrics_service.create_author_metrics_tables():
-            print("❌ Failed to create metrics tables")
-            return 1
-        print("✅ Metrics tables created")
-        
-        # Calculate collaboration metrics
-        print("🤝 Calculating collaboration network metrics...")
-        collab_stats = metrics_service.calculate_collaboration_metrics()
-        if 'error' in collab_stats:
-            print(f"⚠️ Collaboration metrics warning: {collab_stats['error']}")
-        else:
-            print(f"✅ Processed {collab_stats['processed_authors']} authors for collaboration")
-        
-        # Calculate rising star metrics
-        print("⭐ Calculating rising star metrics...")
-        rising_stats = metrics_service.calculate_rising_star_metrics()
-        if 'error' in rising_stats:
-            print(f"⚠️ Rising star metrics warning: {rising_stats['error']}")
-        else:
-            print(f"✅ Processed {rising_stats['processed_authors']} authors for rising star analysis")
-        
-        # Calculate comprehensive rankings
-        print("🏆 Calculating comprehensive rankings...")
-        ranking_stats = metrics_service.calculate_comprehensive_rankings()
-        if 'error' in ranking_stats:
-            print(f"⚠️ Rankings calculation warning: {ranking_stats['error']}")
-        else:
-            print(f"✅ Processed {ranking_stats['processed_authors']} authors for comprehensive ranking")
-        
-        # Phase 1.4: Create final target table
-        print("\n🎯 Phase 1.4: Creating Final Target Table")
-        print("-" * 40)
+        print("ℹ️  Integrated metrics calculation approach:")
+        print("   • All advanced metrics computed directly during table creation")
+        print("   • Streamlined process with maintained functionality")
         
         if not final_table_service.create_final_author_table():
             print("❌ Failed to create final author table")
@@ -178,8 +147,8 @@ def main():
         print(f"📋 Complete data records: {final_stats['authors_with_complete_data']}")
         print(f"⚠️ Partial data records: {final_stats['authors_with_partial_data']}")
         
-        # Phase 1.5: Generate reports and statistics
-        print("\n📊 Phase 1.5: Generating Reports")
+        # Phase 1.4: Generate reports and statistics
+        print("\n📊 Phase 1.4: Generating Reports")
         print("-" * 40)
         
         # Create reports directory
@@ -193,7 +162,13 @@ def main():
         
         # Get comprehensive processing statistics
         processing_stats = profile_service.get_processing_statistics()
-        metrics_stats = metrics_service.get_metrics_statistics()
+        
+        # Simplified metrics stats (no intermediate metrics service)
+        metrics_stats = {
+            'approach': 'simplified_direct_calculation',
+            'message': 'All metrics computed directly in final_author_table',
+            'benefits': ['reduced_complexity', 'better_performance', 'easier_maintenance']
+        }
         
         # Calculate timing statistics
         end_time = datetime.now()

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Author Processing Step 4: Create Final Author Table
-Creates and populates the final target table matching document requirements
+Author Processing Step 3: Create Final Author Table
+Creates and populates the final target table with all computed metrics
 """
 
 import sys
@@ -26,15 +26,15 @@ def setup_logging():
         format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
         handlers=[
             logging.StreamHandler(),
-            logging.FileHandler(log_dir / 'step4_create_final_table.log')
+            logging.FileHandler(log_dir / 'step3_create_final_table.log')
         ]
     )
 
 
 def main():
-    """Execute Step 4: Create Final Author Table"""
+    """Execute Step 3: Create Final Author Table"""
     
-    print("🎯 Step 4: Creating Final Target Table")
+    print("🎯 Step 3: Creating Final Target Table")
     print("=" * 40)
     
     try:
@@ -80,7 +80,7 @@ def main():
         
     except Exception as e:
         print(f"❌ Critical error: {e}")
-        logging.getLogger(__name__).error(f"Step 4 failed: {e}", exc_info=True)
+        logging.getLogger(__name__).error(f"Step 3 failed: {e}", exc_info=True)
         return 1
 
 

@@ -136,7 +136,7 @@ class FinalAuthorTableService:
                 'processing_errors': 0
             }
             
-            # Get comprehensive author data from all related tables
+            # Get author data directly from author_profiles (simplified approach)
             authors_data = self.db_manager.fetch_all("""
                 SELECT 
                     p.s2_author_id,
@@ -148,13 +148,8 @@ class FinalAuthorTableService:
                     p.first_author_count,
                     p.last_author_count,
                     p.first_author_ratio,
-                    p.last_author_ratio,
-                    r.h_index_calculated,
-                    r.total_citations as ranked_total_citations,
-                    r.first_author_percentage,
-                    r.last_author_percentage
+                    p.last_author_ratio
                 FROM author_profiles p
-                LEFT JOIN author_comprehensive_rankings r ON p.s2_author_id = r.s2_author_id
                 WHERE p.s2_author_id IS NOT NULL
                 ORDER BY p.paper_count DESC
             """)
@@ -183,7 +178,7 @@ class FinalAuthorTableService:
                         'last_author_percentage': last_author_percentage,
                         'total_influential_citations': self._calculate_total_influential_citations(author['s2_author_id']),
                         'semantic_scholar_citation_count': self._calculate_semantic_scholar_citation_count(author['s2_author_id']),
-                        'semantic_scholar_h_index': author.get('h_index_calculated'),
+                        'semantic_scholar_h_index': self._calculate_h_index(author['s2_author_id']),
                         'name': author['dblp_author_name'],
                         'name_snapshot': author['dblp_author_name'],
                         'affiliations_snapshot': '',  # Empty as specified
@@ -287,6 +282,44 @@ class FinalAuthorTableService:
             
         except Exception as e:
             logger.warning(f"Error calculating citation count for author {s2_author_id}: {e}")
+            return 0
+    
+    def _calculate_h_index(self, s2_author_id: str) -> int:
+        """
+        Calculate H-index for an author based on their papers' citation counts
+        H-index = the largest number h such that the author has h papers with at least h citations each
+        
+        Args:
+            s2_author_id: Semantic Scholar author ID
+            
+        Returns:
+            H-index value
+        """
+        try:
+            # Get all papers and their citation counts for this author, sorted by citations descending
+            papers_citations = self.db_manager.fetch_all("""
+                SELECT e.semantic_citation_count
+                FROM authorships a
+                JOIN enriched_papers e ON a.semantic_paper_id = e.semantic_paper_id
+                WHERE a.s2_author_id = %s 
+                AND e.semantic_paper_id IS NOT NULL 
+                AND e.semantic_citation_count IS NOT NULL
+                ORDER BY e.semantic_citation_count DESC
+            """, (s2_author_id,))
+            
+            # Calculate H-index
+            h_index = 0
+            for i, paper in enumerate(papers_citations, 1):
+                citation_count = paper['semantic_citation_count'] or 0
+                if citation_count >= i:
+                    h_index = i
+                else:
+                    break
+            
+            return h_index
+            
+        except Exception as e:
+            logger.warning(f"Error calculating H-index for author {s2_author_id}: {e}")
             return 0
     
     def _extract_dblp_aliases(self, author_name: str) -> str:

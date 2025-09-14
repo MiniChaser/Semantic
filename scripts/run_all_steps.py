@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Author Processing - Run All Steps
-Executes all Phase 1 steps sequentially with better error handling and logging
+Executes all Phase 1 steps sequentially with integrated metrics calculation.
 """
 
 import sys
@@ -56,13 +56,12 @@ def main():
     print(f"⏰ Started at: {overall_start_time.strftime('%Y-%m-%d %H:%M:%S')}")
     print()
     
-    # Define all steps
+    # Define all processing steps
     steps = [
         ("scripts/step1_create_authorships.py", "Step 1: Create Authorships Table"),
         ("scripts/step2_create_author_profiles.py", "Step 2: Create Author Profiles Table"),
-        ("scripts/step3_calculate_metrics.py", "Step 3: Calculate Advanced Metrics"), 
-        ("scripts/step4_create_final_table.py", "Step 4: Create Final Author Table"),
-        ("scripts/step5_generate_reports.py", "Step 5: Generate Reports")
+        ("scripts/step3_create_final_table.py", "Step 3: Create Final Author Table"),
+        ("scripts/step4_generate_reports.py", "Step 4: Generate Reports")
     ]
     
     successful_steps = 0
