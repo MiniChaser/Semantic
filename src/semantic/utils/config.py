@@ -28,6 +28,7 @@ class AppConfig:
     
     # Scheduling configuration
     schedule_cron: str = "0 2 * * 1"  # Every Monday at 2 AM
+    comprehensive_schedule_cron: str = "0 2 */7 * *"  # Every 7 days at 2 AM
     max_retries: int = 3
     retry_delay: int = 300  # 5 minutes
     
@@ -62,6 +63,7 @@ class AppConfig:
             
             # Scheduling configuration
             schedule_cron=os.getenv('SCHEDULE_CRON', '0 2 * * 1'),
+            comprehensive_schedule_cron=os.getenv('COMPREHENSIVE_SCHEDULE_CRON', '0 2 */7 * *'),
             max_retries=int(os.getenv('MAX_RETRIES', '3')),
             retry_delay=int(os.getenv('RETRY_DELAY', '300')),
             
