@@ -157,18 +157,6 @@ Or run individual steps:
    uv run python scripts/step5_generate_reports.py
    ```
 
-### Advanced Usage
-
-#### Testing Pipeline Components
-```bash
-uv run python scripts/test_comprehensive_pipeline.py
-```
-
-#### Author Processing (Phase 1 only)
-```bash
-uv run python scripts/run_author_processing_phase1.py
-```
-
 ## 📊 Data Processing Flow
 
 ### 1. DBLP Data Acquisition
