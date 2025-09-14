@@ -5,7 +5,6 @@ Executes the complete author data processing pipeline without S2 API calls
 """
 
 import sys
-import os
 import logging
 import time
 import json
