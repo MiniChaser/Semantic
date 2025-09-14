@@ -17,8 +17,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent / 'src'))
 
 from semantic.utils.config import AppConfig
-from semantic.services.s2_enrichment_service import S2EnrichmentService
-from semantic.services.pdf_download_service import PDFDownloadService
+from semantic.services.s2_service.s2_enrichment_service import S2EnrichmentService
+from semantic.services.s2_service.pdf_download_service import PDFDownloadService
 from semantic.database.connection import get_db_manager
 
 
@@ -131,7 +131,7 @@ async def main():
         
         # Process papers individually (each paper is saved immediately)
         print("\n🔄 Starting individual paper enrichment process...")
-        success = s2_service.enrich_papers(limit=20)
+        success = s2_service.enrich_papers(limit=38000)
         
         if success:
             # Calculate timing statistics

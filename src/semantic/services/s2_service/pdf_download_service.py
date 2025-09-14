@@ -15,8 +15,8 @@ import hashlib
 import re
 from datetime import datetime
 
-from ..database.connection import DatabaseManager
-from ..database.repositories.enriched_paper import EnrichedPaperRepository
+from ...database.connection import DatabaseManager
+from ...database.repositories.enriched_paper import EnrichedPaperRepository
 
 
 class PDFDownloadService:

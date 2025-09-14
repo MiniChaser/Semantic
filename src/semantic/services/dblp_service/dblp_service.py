@@ -13,8 +13,8 @@ from typing import List, Dict, Optional, Set, Tuple
 from dataclasses import dataclass
 from tqdm import tqdm
 from lxml import etree
-from ..database.models import DBLP_Paper
-from ..utils.config import AppConfig
+from ...database.models import DBLP_Paper
+from ...utils.config import AppConfig
 
 
 @dataclass

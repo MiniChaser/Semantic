@@ -9,12 +9,12 @@ import time
 from datetime import datetime
 from typing import List, Dict, Tuple, Optional, Any
 
-from ..database.connection import DatabaseManager, get_db_manager
-from ..database.models.paper import DBLP_Paper
-from ..database.models.enriched_paper import EnrichedPaper
-from ..database.repositories.enriched_paper import EnrichedPaperRepository
-from ..services.s2_service import SemanticScholarAPI, S2DataParser, S2ValidationService
-from ..utils.config import AppConfig
+from ...database.connection import DatabaseManager, get_db_manager
+from ...database.models.paper import DBLP_Paper
+from ...database.models.enriched_paper import EnrichedPaper
+from ...database.repositories.enriched_paper import EnrichedPaperRepository
+from .s2_service import SemanticScholarAPI, S2DataParser, S2ValidationService
+from ...utils.config import AppConfig
 
 
 class ProcessingStatistics:

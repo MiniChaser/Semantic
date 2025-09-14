@@ -10,7 +10,7 @@ from typing import Dict, List, Optional, Tuple
 from collections import defaultdict
 from datetime import datetime
 
-from ..database.connection import DatabaseManager
+from ...database.connection import DatabaseManager
 
 
 logger = logging.getLogger(__name__)

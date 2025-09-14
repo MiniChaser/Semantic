@@ -11,7 +11,7 @@ from typing import Dict, List, Optional, Any
 from datetime import datetime
 from decimal import Decimal
 
-from ..database.connection import DatabaseManager
+from ...database.connection import DatabaseManager
 
 
 logger = logging.getLogger(__name__)

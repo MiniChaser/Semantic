@@ -9,7 +9,7 @@ from datetime import datetime, timedelta
 from typing import List, Set, Tuple, Dict, Any
 from ..database.connection import DatabaseManager, get_db_manager
 from ..database.models import DBLPPaperRepository, DBLP_Paper
-from ..services.dblp_service import DBLPService
+from .dblp_service.dblp_service import DBLPService
 from ..utils.config import AppConfig
 
 

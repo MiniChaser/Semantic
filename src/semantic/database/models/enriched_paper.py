@@ -183,7 +183,7 @@ class EnrichedPaper:
             self.dblp_created_at = None
         
         # Parse additional DBLP author fields
-        from ...services.s2_service import S2DataParser
+        from ...services.s2_service.s2_service import S2DataParser
         first_author, last_author, first_author_id = S2DataParser.parse_dblp_author_fields(
             json.dumps(dblp_paper.authors) if isinstance(dblp_paper.authors, list) else str(dblp_paper.authors or '')
         )
