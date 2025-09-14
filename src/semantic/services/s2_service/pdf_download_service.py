@@ -7,7 +7,6 @@ import asyncio
 import aiohttp
 import aiofiles
 import logging
-import os
 from pathlib import Path
 from typing import Optional, Tuple, Dict, Any
 from urllib.parse import urljoin, urlparse

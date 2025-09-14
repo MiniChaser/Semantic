@@ -7,8 +7,7 @@ Creates author profiles, authorships table, and calculates author metrics
 import json
 import logging
 from datetime import datetime
-from typing import Dict, List, Optional
-from collections import defaultdict
+from typing import Dict, List
 
 from ...database.connection import DatabaseManager
 from .author_disambiguation_service import AuthorMatcher

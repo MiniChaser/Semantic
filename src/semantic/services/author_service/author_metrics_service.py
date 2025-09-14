@@ -6,8 +6,7 @@ rising star indicators, and comprehensive author rankings
 """
 
 import logging
-from typing import Dict, List, Optional, Tuple
-from collections import defaultdict
+from typing import Dict, List
 from datetime import datetime
 
 from ...database.connection import DatabaseManager

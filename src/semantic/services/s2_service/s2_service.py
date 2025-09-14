@@ -3,16 +3,12 @@ Semantic Scholar API Service
 Handles API integration, data enrichment, and validation
 """
 
-import asyncio
 import json
 import logging
 import time
-from datetime import datetime
 from typing import List, Dict, Optional, Tuple, Any
 import requests
 from difflib import SequenceMatcher
-
-from ...utils.config import AppConfig
 
 
 class SemanticScholarAPI:

@@ -7,9 +7,8 @@ import os
 import gzip
 import logging
 import requests
-from pathlib import Path
 from datetime import datetime
-from typing import List, Dict, Optional, Set, Tuple
+from typing import List, Optional, Set
 from dataclasses import dataclass
 from tqdm import tqdm
 from lxml import etree

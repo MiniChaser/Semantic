@@ -4,9 +4,8 @@ Author Disambiguation Service
 Implements multi-level author matching strategies for DBLP and Semantic Scholar data
 """
 
-import json
 import re
-from typing import List, Dict, Tuple, Optional
+from typing import List, Dict, Tuple
 from thefuzz import fuzz
 from unidecode import unidecode
 
