@@ -488,14 +488,14 @@ class AuthorMetricsService:
         highly_cited_papers = sum(1 for p in papers_citations if p['semantic_citation_count'] >= 50)
         top_cited_papers = sum(1 for p in papers_citations if p['semantic_citation_count'] >= 100)
         
-        # Calculate impact score - convert Decimal to float
-        citation_factor = min(float(author['total_citations']) / 1000, 1.0)  # Normalize to 0-1
+        # Calculate impact score
+        citation_factor = min(author['total_citations'] / 1000, 1.0)  # Normalize to 0-1
         h_index_factor = min(h_index / 50, 1.0)  # Normalize to 0-1
         highly_cited_factor = min(highly_cited_papers / 10, 1.0)  # Normalize to 0-1
         impact_score = (citation_factor * 0.4 + h_index_factor * 0.4 + highly_cited_factor * 0.2)
         
-        # Calculate leadership score - convert Decimal to float
-        leadership_score = (float(author['first_author_ratio']) * 0.4 + float(author['last_author_ratio']) * 0.6)
+        # Calculate leadership score
+        leadership_score = (author['first_author_ratio'] * 0.4 + author['last_author_ratio'] * 0.6)
         
         # Calculate productivity metrics
         publications_per_year = author['paper_count'] / max(author['career_length'], 1)
@@ -523,12 +523,12 @@ class AuthorMetricsService:
             'author_name': author['s2_author_name'] or author['dblp_author_name'],
             'total_papers': author['paper_count'],
             'total_citations': author['total_citations'],
-            'avg_citations_per_paper': float(author['avg_citations_per_paper']) if author['avg_citations_per_paper'] is not None else 0.0,
+            'avg_citations_per_paper': author['avg_citations_per_paper'] if author['avg_citations_per_paper'] is not None else 0.0,
             'h_index_calculated': h_index,
             'first_author_papers': author['first_author_count'],
             'last_author_papers': author['last_author_count'],
-            'first_author_percentage': float(author['first_author_ratio']) * 100,
-            'last_author_percentage': float(author['last_author_ratio']) * 100,
+            'first_author_percentage': author['first_author_ratio'] * 100,
+            'last_author_percentage': author['last_author_ratio'] * 100,
             'leadership_score': leadership_score,
             'highly_cited_papers': highly_cited_papers,
             'top_cited_papers': top_cited_papers,

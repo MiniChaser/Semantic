@@ -257,8 +257,8 @@ class AuthorProfileService:
                 first_author_count INTEGER DEFAULT 0,
                 last_author_count INTEGER DEFAULT 0,
                 middle_author_count INTEGER DEFAULT 0,
-                first_author_ratio NUMERIC DEFAULT 0,
-                last_author_ratio NUMERIC DEFAULT 0,
+                first_author_ratio REAL DEFAULT 0,
+                last_author_ratio REAL DEFAULT 0,
                 
                 -- Affiliation and external data (for future enhancement)
                 affiliation TEXT,  -- TODO: Add CSRankings integration
