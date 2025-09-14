@@ -151,6 +151,23 @@ class DatabaseManager:
             self.logger.error(f"Query execution failed: {e}")
             return []
     
+    def execute_batch_query(self, query: str, params_list: List = None) -> bool:
+        """Execute batch SQL query with multiple parameter sets"""
+        try:
+            with self.get_cursor() as cursor:
+                if params_list:
+                    # Process each parameter set for JSON compatibility
+                    processed_params = [
+                        self._process_json_params(params) for params in params_list
+                    ]
+                    cursor.executemany(query, processed_params)
+                else:
+                    cursor.execute(query)
+                return True
+        except Exception as e:
+            self.logger.error(f"Batch query execution failed: {e}")
+            return False
+    
     def _process_json_params(self, params):
         """Process parameters to handle JSON objects for JSONB compatibility"""
         if not params:
