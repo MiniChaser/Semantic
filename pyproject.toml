@@ -15,6 +15,7 @@ dependencies = [
     "acl-anthology",
     "aiohttp>=3.12.15",
     "aiofiles>=24.1.0",
+    "thefuzz>=0.22.1",
 ]
 
 [tool.uv]
