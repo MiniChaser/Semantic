@@ -75,7 +75,7 @@ class FinalAuthorTableService:
                 
                 -- Career metrics
                 career_length INTEGER DEFAULT 0,
-                last_author_percentage NUMERIC DEFAULT 0,
+                last_author_percentage INTEGER DEFAULT 0,
                 
                 -- Citation and impact metrics
                 total_influential_citations INTEGER,     -- Sum of influentialCitationCount from enriched_papers
@@ -159,8 +159,8 @@ class FinalAuthorTableService:
                     # Extract DBLP aliases using 4-digit disambiguation pattern
                     external_ids_dblp = self._extract_dblp_aliases(author['dblp_author_name'])
                     
-                    # Calculate last author percentage
-                    last_author_percentage = (author['last_author_ratio'] * 100) if author['last_author_ratio'] else 0
+                    # Calculate last author percentage as integer
+                    last_author_percentage = int(author['last_author_ratio'] * 100) if author['last_author_ratio'] else 0
                     
                     # Prepare final author record
                     final_author_record = {
