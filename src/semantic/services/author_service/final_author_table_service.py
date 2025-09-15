@@ -95,8 +95,12 @@ class FinalAuthorTableService:
                 updated_at TIMESTAMP WITHOUT TIME ZONE DEFAULT CURRENT_TIMESTAMP
             );
             """
-            
+
             self.db_manager.execute_query(create_table_sql)
+
+            # Add table comment
+            comment_sql = "COMMENT ON TABLE final_author_table IS 'Final output (step3)';"
+            self.db_manager.execute_query(comment_sql)
             
             # Create indexes
             indexes = [
