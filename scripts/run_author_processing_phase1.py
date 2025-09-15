@@ -169,6 +169,7 @@ def main():
             'message': 'All metrics computed directly in final_author_table',
             'benefits': ['reduced_complexity', 'better_performance', 'easier_maintenance']
         }
+
         
         # Calculate timing statistics
         end_time = datetime.now()
@@ -186,9 +187,6 @@ def main():
             },
             'authorships_statistics': authorship_stats,
             'profiles_statistics': profile_stats,
-            'collaboration_statistics': collab_stats,
-            'rising_star_statistics': rising_stats,
-            'ranking_statistics': ranking_stats,
             'final_table_statistics': final_stats,
             'comprehensive_processing_stats': processing_stats,
             'comprehensive_metrics_stats': metrics_stats,
