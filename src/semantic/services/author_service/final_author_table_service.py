@@ -75,7 +75,7 @@ class FinalAuthorTableService:
                 
                 -- Career metrics
                 career_length INTEGER DEFAULT 0,
-                last_author_percentage INTEGER DEFAULT 0, -- TODO
+                last_author_percentage INTEGER DEFAULT 0, -- TODO: = (dblp_top_paper_last_author_count / dblp_top_paper_total_paper_captured) * 100
                 
                 -- Citation and impact metrics
                 total_influential_citations INTEGER,     -- Sum of influentialCitationCount from enriched_papers
