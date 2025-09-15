@@ -74,7 +74,7 @@ def main():
         for i, record in enumerate(sample_records, 1):
             print(f"  {i}. {record['dblp_author']}")
             print(f"     Papers: {record['first_author_count']}, Career: {record['career_length']} years")
-            print(f"     Last author: {record['last_author_percentage']:.1f}%")
+            print(f"     Last author: {record['last_author_percentage']}")
         
         return 0
         
