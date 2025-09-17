@@ -207,7 +207,7 @@ class DBLPParser:
                         tag='inproceedings',
                         dtd_validation=False,
                         load_dtd=True,
-                        resolve_entities=True,
+                        resolve_entities=False,
                         encoding='ISO-8859-1'
                     )
                     
