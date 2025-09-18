@@ -38,6 +38,13 @@ class AppConfig:
     
     # Semantic Scholar API configuration
     semantic_scholar_api_key: Optional[str] = None
+
+    # DBLP API fallback configuration
+    enable_dblp_api_fallback: bool = True
+    dblp_api_base_url: str = "https://dblp.org/search/publ/api"
+    dblp_api_rate_limit: float = 0.1  # Seconds between API calls
+    dblp_api_timeout: int = 10  # API request timeout in seconds
+    dblp_api_max_retries: int = 2  # Max retries for API calls
     
     @classmethod
     def from_env(cls) -> 'AppConfig':
@@ -72,23 +79,41 @@ class AppConfig:
             incremental_check_days=int(os.getenv('INCREMENTAL_CHECK_DAYS', '7')),
             
             # Semantic Scholar API configuration
-            semantic_scholar_api_key=os.getenv('SEMANTIC_SCHOLAR_API_KEY')
+            semantic_scholar_api_key=os.getenv('SEMANTIC_SCHOLAR_API_KEY'),
+
+            # DBLP API fallback configuration
+            enable_dblp_api_fallback=os.getenv('ENABLE_DBLP_API_FALLBACK', 'true').lower() == 'true',
+            dblp_api_base_url=os.getenv('DBLP_API_BASE_URL', 'https://dblp.org/search/publ/api'),
+            dblp_api_rate_limit=float(os.getenv('DBLP_API_RATE_LIMIT', '0.1')),
+            dblp_api_timeout=int(os.getenv('DBLP_API_TIMEOUT', '10')),
+            dblp_api_max_retries=int(os.getenv('DBLP_API_MAX_RETRIES', '2'))
         )
     
     def validate(self) -> bool:
         """Validate configuration"""
         if not self.dblp_url:
             return False
-        
+
         if not self.download_dir or not self.compressed_file or not self.xml_file:
             return False
-        
+
         if self.batch_size <= 0:
             return False
-        
+
         if self.max_retries < 0 or self.retry_delay < 0:
             return False
-        
+
+        # Validate DBLP API fallback configuration
+        if self.enable_dblp_api_fallback:
+            if not self.dblp_api_base_url:
+                return False
+            if self.dblp_api_rate_limit < 0:
+                return False
+            if self.dblp_api_timeout <= 0:
+                return False
+            if self.dblp_api_max_retries < 0:
+                return False
+
         return True
     
     def __str__(self) -> str:
