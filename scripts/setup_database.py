@@ -11,7 +11,7 @@ import os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
 from semantic.database.connection import get_db_manager
-from semantic.database.schema import DatabaseSchema
+from semantic.database.schemas import DatabaseSchema
 
 def main():
     """Main function to setup database"""
@@ -44,7 +44,7 @@ def main():
             
             # Show table information
             print("\n📊 Table Information:")
-            for table in ['dblp_papers', 'dblp_processing_meta', 'scheduler_jobs']:
+            for table in ['dblp_papers', 'dblp_processing_meta', 'processing_metadata']:
                 info = schema.get_table_info(table)
                 if info:
                     print(f"\n📄 Table: {table}")

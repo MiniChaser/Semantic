@@ -131,33 +131,6 @@ class SemanticScholarAPI:
             's2FieldsOfStudy', 'publicationDate'
         ]
     
-    def batch_get_papers(self, paper_ids: List[str]) -> List[Optional[Dict]]:
-        """Batch retrieve papers by IDs"""
-        if not paper_ids:
-            return []
-        
-        # S2 API supports up to 500 IDs per batch
-        batch_size = 500
-        all_results = []
-        
-        for i in range(0, len(paper_ids), batch_size):
-            batch_ids = paper_ids[i:i + batch_size]
-            
-            url = f"{self.base_url}/paper/batch"
-            params = {'fields': ','.join(self.get_paper_fields())}
-            json_data = {"ids": batch_ids}
-            
-            self.logger.info(f"Requesting batch {i//batch_size + 1}: {len(batch_ids)} papers")
-            result = self._make_request(url, params=params, json_data=json_data)
-            
-            if result:
-                all_results.extend(result)
-            else:
-                # Add None for each failed paper in batch
-                all_results.extend([None] * len(batch_ids))
-        
-        return all_results
-    
     def search_paper_by_title(self, title: str, limit: int = 1) -> Optional[Dict]:
         """Search for paper by title"""
         url = f"{self.base_url}/paper/search"

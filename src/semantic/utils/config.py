@@ -23,7 +23,7 @@ class AppConfig:
     dtd_file: str = "external/dblp.dtd"
     
     # Processing configuration
-    target_venues: Set[str] = field(default_factory=lambda: {'acl', 'naacl', 'emnlp', 'findings'})
+    target_venues: Set[str] = field(default_factory=lambda: {'acl', 'naacl', 'emnlp', 'eacl', 'tacl'})
     enable_venue_filter: bool = True
     batch_size: int = 10000
     log_level: str = "INFO"
@@ -54,7 +54,7 @@ class AppConfig:
         load_dotenv()
         
         # Parse target venues
-        target_venues_str = os.getenv('TARGET_VENUES', 'acl,naacl,emnlp,findings')
+        target_venues_str = os.getenv('TARGET_VENUES', 'acl,naacl,emnlp,eacl,tacl')
         target_venues = set(venue.strip().lower() for venue in target_venues_str.split(','))
         
         return cls(

@@ -256,7 +256,7 @@ def main():
         for i, record in enumerate(sample_records, 1):
             print(f"  {i}. {record['dblp_author']}")
             print(f"     Papers: {record['first_author_count']}, Career: {record['career_length']} years")
-            print(f"     Last author: {record['last_author_percentage']:.1f}%")
+            print(f"     Last author: {record['last_author_percentage']}")
         
         print("\n✅ Author Processing Phase 1 completed successfully!")
         print("🚀 Ready for Phase 2 (S2 API enhancement) when needed")

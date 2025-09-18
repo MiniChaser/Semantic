@@ -57,7 +57,7 @@ async def download_pdfs_for_enriched_papers(db_manager, logger):
             # Download PDFs in batch with moderate concurrency
             download_stats = await pdf_service.download_papers_batch(
                 limit=None,  # Download all available
-                concurrent_downloads=3  # Conservative concurrency to avoid overwhelming servers
+                concurrent_downloads=30  # Conservative concurrency to avoid overwhelming servers
             )
             
             print("\n📊 PDF DOWNLOAD RESULTS:")

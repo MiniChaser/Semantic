@@ -16,59 +16,147 @@ class AuthorMatcher:
     def __init__(self):
         self.match_stats = {
             'exact_matches': 0,
-            'initialism_matches': 0, 
+            'initialism_matches': 0,
             'structural_matches': 0,
             'fuzzy_matches': 0,
             'unique_initial_matches': 0,
             'positional_matches': 0,
+            'prefix_matches': 0,          # New
+            'nickname_matches': 0,        # New
+            'flexible_abbrev_matches': 0, # New
             'unmatched': 0
         }
+
+        # Comprehensive nickname mapping
+        self.nickname_map = {
+            # Common English nicknames
+            'bob': ['robert', 'bobby'],
+            'bill': ['william', 'billy', 'will'],
+            'dick': ['richard', 'rick', 'ricky'],
+            'tom': ['thomas', 'tommy'],
+            'jim': ['james', 'jimmy'],
+            'mike': ['michael', 'mickey'],
+            'dave': ['david', 'davy'],
+            'chris': ['christopher', 'christina', 'christine'],
+            'steve': ['steven', 'stephen'],
+            'joe': ['joseph', 'joey'],
+            'sam': ['samuel', 'samantha'],
+            'alex': ['alexander', 'alexandra', 'alexis'],
+            'nick': ['nicholas', 'nicole'],
+            'pat': ['patrick', 'patricia'],
+            'matt': ['matthew', 'matthias'],
+            'dan': ['daniel', 'danny'],
+            'rob': ['robert', 'robbie'],
+            'andy': ['andrew', 'andreas'],
+            'tony': ['anthony', 'antonio'],
+            'ben': ['benjamin', 'benedict'],
+            # International variations
+            'seb': ['sebastian', 'sebastien'],
+            'max': ['maximilian', 'maximiliano', 'maxime'],
+            'fred': ['frederick', 'frederic'],
+            'beth': ['elizabeth', 'bethany'],
+            'liz': ['elizabeth', 'lizzy'],
+            'kate': ['katherine', 'kathryn', 'katie'],
+            'sue': ['susan', 'susanne'],
+        }
+
+        # Create reverse mapping for efficiency
+        self.reverse_nickname_map = {}
+        for nickname, full_names in self.nickname_map.items():
+            for full_name in full_names:
+                if full_name not in self.reverse_nickname_map:
+                    self.reverse_nickname_map[full_name] = []
+                self.reverse_nickname_map[full_name].append(nickname)
     
+    def _enhanced_comma_processing(self, name: str) -> str:
+        """
+        Enhanced comma processing for complex name formats
+        Handles multiple comma patterns and edge cases
+        """
+        if not ',' in name:
+            return name
+
+        # Split by comma and clean parts
+        parts = [part.strip() for part in name.split(',')]
+
+        # Handle different comma patterns
+        if len(parts) == 2:
+            # Simple "Last, First" or "Last, First Middle"
+            last_part = parts[0]
+            first_part = parts[1]
+            return f"{first_part} {last_part}"
+
+        elif len(parts) == 3:
+            # "Last, First, Jr." or "Last, First Middle, Suffix"
+            last_part = parts[0]
+            first_part = parts[1]
+            suffix = parts[2].lower()
+
+            # Common suffixes to move to end
+            if suffix in ['jr', 'sr', 'iii', 'ii', 'iv', 'v', 'phd', 'md', 'esq']:
+                return f"{first_part} {last_part} {suffix}"
+            else:
+                # Treat as additional first/middle name
+                return f"{first_part} {suffix} {last_part}"
+
+        elif len(parts) > 3:
+            # Complex case: "Last, First, Middle, Suffix"
+            last_part = parts[0]
+            first_parts = parts[1:-1]  # Everything except last and first
+            potential_suffix = parts[-1].lower()
+
+            if potential_suffix in ['jr', 'sr', 'iii', 'ii', 'iv', 'v', 'phd', 'md', 'esq']:
+                # Last part is suffix
+                return f"{' '.join(first_parts)} {last_part} {potential_suffix}"
+            else:
+                # All middle parts are names
+                return f"{' '.join(parts[1:])} {last_part}"
+
+        # Fallback: join all parts
+        return ' '.join(parts)
+
     def normalize_name(self, name: str) -> str:
         """
-        Comprehensive name normalization for cross-platform matching
-        Handles: numeric suffixes, special characters, abbreviations, punctuation
-        
+        Enhanced comprehensive name normalization for cross-platform matching
+        Handles: numeric suffixes, special characters, abbreviations, punctuation, complex comma formats
+
         Args:
             name: Raw author name string
-            
+
         Returns:
             Normalized name string
         """
         if not name or not isinstance(name, str):
             return ""
-        
-        # Handle "LastName, FirstName" format
-        if ',' in name:
-            parts = name.split(',', 1)
-            if len(parts) == 2:
-                name = f"{parts[1].strip()} {parts[0].strip()}"
-        
+
+        # Enhanced comma handling
+        name = self._enhanced_comma_processing(name)
+
         # Remove DBLP numeric suffixes (e.g., "0001", "0004") - CRITICAL FIX
         name = re.sub(r'\s+\d{4}$', '', name)
-        
+
         # Remove other numeric disambiguation patterns
         name = re.sub(r'\s+\d{1,3}$', '', name)  # Handle 1-3 digit suffixes
-        
+
         # Unicode normalization and lowercase
         name = unidecode(name).lower()
-        
+
         # Remove common academic suffixes and titles
         suffixes = ['jr', 'sr', 'phd', 'md', 'iii', 'ii', 'iv', 'v', 'esq', 'dr', 'prof', 'professor']
         name_parts = name.split()
         filtered_parts = [part for part in name_parts if part not in suffixes]
         name = ' '.join(filtered_parts)
-        
+
         # Standardize punctuation and whitespace
         name = name.replace('-', ' ')
         name = name.replace('_', ' ')
-        
+
         # Remove all punctuation except dots (for initials)
         name = re.sub(r'[^\w\s\.]', '', name)
-        
+
         # Normalize multiple spaces
         name = re.sub(r'\s+', ' ', name).strip()
-        
+
         return name
     
     def get_name_interpretations(self, normalized_name: str) -> List[Tuple[str, str]]:
@@ -104,12 +192,30 @@ class AuthorMatcher:
     
     def match_authors_enhanced(self, dblp_authors: List[str], s2_authors: List[Dict]) -> Tuple[Dict, List]:
         """
-        Enhanced multi-tier author matching algorithm
-        
+        ENHANCED multi-tier author matching algorithm with advanced matching strategies
+
+        New Features:
+        - Flexible abbreviation matching: "R. Feris" <-> "Rogério Feris"
+        - Nickname matching: "Bob Smith" <-> "Robert Smith"
+        - Prefix/truncation matching: "Andr" <-> "André", "Seb" <-> "Sébastien"
+        - Enhanced comma processing: "Jean, Sébastien" <-> "Sébastien Jean"
+
+        Matching Tiers:
+        1. Exact full name matching
+        2. Enhanced initialism matching
+        2.5. Flexible abbreviation matching (NEW)
+        2.7. Nickname matching (NEW)
+        3. Structural interpretation matching
+        3.5. Prefix/truncation matching (NEW)
+        4. Enhanced fuzzy string matching
+        5. Enhanced abbreviation variants
+        6. Unique initial matching
+        7. Positional fallback
+
         Args:
             dblp_authors: List of DBLP author name strings
             s2_authors: List of S2 author objects with 'name' and 'authorId'
-            
+
         Returns:
             Tuple of (matched_pairs_dict, unmatched_dblp_authors)
         """
@@ -184,7 +290,35 @@ class AuthorMatcher:
                                 break
                         if pattern_matched:
                             break
-        
+
+        # Tier 2.5: NEW - Flexible abbreviation matching
+        for dblp_norm in list(remaining_dblp):
+            matched_flexible = False
+            for s2_norm in list(remaining_s2):
+                if self._flexible_abbreviation_match(dblp_norm, s2_norm):
+                    matched[dblp_normalized[dblp_norm]] = s2_normalized[s2_norm]
+                    remaining_dblp.remove(dblp_norm)
+                    remaining_s2.remove(s2_norm)
+                    self.match_stats['flexible_abbrev_matches'] += 1
+                    matched_flexible = True
+                    break
+            if matched_flexible:
+                continue
+
+        # Tier 2.7: NEW - Nickname matching
+        for dblp_norm in list(remaining_dblp):
+            matched_nickname = False
+            for s2_norm in list(remaining_s2):
+                if self._nickname_match(dblp_norm, s2_norm):
+                    matched[dblp_normalized[dblp_norm]] = s2_normalized[s2_norm]
+                    remaining_dblp.remove(dblp_norm)
+                    remaining_s2.remove(s2_norm)
+                    self.match_stats['nickname_matches'] += 1
+                    matched_nickname = True
+                    break
+            if matched_nickname:
+                continue
+
         # Tier 3: Structural interpretation matching
         for dblp_norm in list(remaining_dblp):
             dblp_interpretations = self.get_name_interpretations(dblp_norm)
@@ -207,7 +341,24 @@ class AuthorMatcher:
                         break
                 if matched_interpretation:
                     break
-        
+
+        # Tier 3.5: NEW - Prefix/truncation matching
+        for dblp_norm in list(remaining_dblp):
+            best_prefix_match = None
+            best_prefix_score = 0
+
+            for s2_norm in list(remaining_s2):
+                prefix_score = self._enhanced_prefix_matching(dblp_norm, s2_norm)
+                if prefix_score > 75 and prefix_score > best_prefix_score:  # Threshold for prefix matching
+                    best_prefix_score = prefix_score
+                    best_prefix_match = s2_norm
+
+            if best_prefix_match:
+                matched[dblp_normalized[dblp_norm]] = s2_normalized[best_prefix_match]
+                remaining_dblp.remove(dblp_norm)
+                remaining_s2.remove(best_prefix_match)
+                self.match_stats['prefix_matches'] += 1
+
         # Tier 4: Enhanced fuzzy string matching with multiple algorithms
         for dblp_norm in list(remaining_dblp):
             best_match = None
@@ -233,20 +384,18 @@ class AuthorMatcher:
                 remaining_s2.remove(best_match)
                 self.match_stats['fuzzy_matches'] += 1
         
-        # Tier 5: Abbreviation and initial variants matching
+        # Tier 5: Enhanced abbreviation variants (using improved flexible matching)
         for dblp_norm in list(remaining_dblp):
-            matched_variant = False  # Move this outside the inner loop
-            
+            matched_variant = False
             for s2_norm in list(remaining_s2):
-                # Check if one is an abbreviation of the other
-                if self._is_abbreviation_match(dblp_norm, s2_norm):
+                # Use improved flexible abbreviation method
+                if self._flexible_abbreviation_match(dblp_norm, s2_norm):
                     matched[dblp_normalized[dblp_norm]] = s2_normalized[s2_norm]
                     remaining_dblp.remove(dblp_norm)
                     remaining_s2.remove(s2_norm)
-                    self.match_stats['initialism_matches'] += 1
+                    self.match_stats['flexible_abbrev_matches'] += 1
                     matched_variant = True
                     break
-            
             if matched_variant:
                 break
         
@@ -318,7 +467,139 @@ class AuthorMatcher:
                     return False
         
         return True
-    
+
+    def _get_name_variants(self, name: str) -> List[str]:
+        """
+        Generate all possible variants of a name including nicknames
+        """
+        variants = [name]  # Original name
+        name_lower = name.lower()
+
+        # Add nickname variants
+        if name_lower in self.nickname_map:
+            variants.extend(self.nickname_map[name_lower])
+
+        # Add reverse nickname variants
+        if name_lower in self.reverse_nickname_map:
+            variants.extend(self.reverse_nickname_map[name_lower])
+
+        return list(set(variants))  # Remove duplicates
+
+    def _flexible_abbreviation_match(self, name1: str, name2: str) -> bool:
+        """
+        Enhanced abbreviation matching for different length name parts
+        Handles: "R. Feris" <-> "Rogério Feris", "J. Smith" <-> "John Smith"
+        """
+        parts1 = name1.split()
+        parts2 = name2.split()
+
+        # Try both directions: name1 as abbreviation of name2, and vice versa
+        return (self._is_abbreviation_of(parts1, parts2) or
+                self._is_abbreviation_of(parts2, parts1))
+
+    def _is_abbreviation_of(self, short_parts: List[str], long_parts: List[str]) -> bool:
+        """Check if short_parts is an abbreviation of long_parts"""
+        if len(short_parts) > len(long_parts):
+            return False
+
+        # Last name must match exactly
+        if not short_parts or not long_parts:
+            return False
+
+        short_last = short_parts[-1].replace('.', '')
+        long_last = long_parts[-1].replace('.', '')
+        if short_last != long_last:
+            return False
+
+        # Check first names (all parts except last)
+        short_first_parts = short_parts[:-1]
+        long_first_parts = long_parts[:-1]
+
+        if len(short_first_parts) > len(long_first_parts):
+            return False
+
+        for i, short_part in enumerate(short_first_parts):
+            if i >= len(long_first_parts):
+                return False
+
+            short_clean = short_part.replace('.', '')
+            long_clean = long_first_parts[i].replace('.', '')
+
+            # Single letter should match first letter of full name
+            if len(short_clean) == 1:
+                if short_clean != long_clean[0]:
+                    return False
+            # Full names should match exactly
+            else:
+                if short_clean != long_clean:
+                    return False
+
+        return True
+
+    def _nickname_match(self, name1: str, name2: str) -> bool:
+        """
+        Check if two names match through nickname mapping
+        Handles: "Bob Smith" <-> "Robert Smith"
+        """
+        parts1 = name1.split()
+        parts2 = name2.split()
+
+        if len(parts1) != len(parts2):
+            return False
+
+        for p1, p2 in zip(parts1, parts2):
+            p1_clean = p1.replace('.', '').lower()
+            p2_clean = p2.replace('.', '').lower()
+
+            # Exact match
+            if p1_clean == p2_clean:
+                continue
+
+            # Check nickname variants
+            p1_variants = self._get_name_variants(p1_clean)
+            p2_variants = self._get_name_variants(p2_clean)
+
+            # Check if any variant matches
+            if not any(v1 in p2_variants or v2 in p1_variants
+                      for v1 in p1_variants for v2 in p2_variants):
+                return False
+
+        return True
+
+    def _enhanced_prefix_matching(self, name1: str, name2: str) -> float:
+        """
+        Calculate prefix matching score with sophisticated logic
+        Returns confidence score 0-100
+        """
+        parts1 = name1.split()
+        parts2 = name2.split()
+
+        if len(parts1) != len(parts2) or len(parts1) == 0:
+            return 0.0
+
+        total_score = 0.0
+        for i, (p1, p2) in enumerate(zip(parts1, parts2)):
+            p1_clean = p1.replace('.', '').lower()
+            p2_clean = p2.replace('.', '').lower()
+
+            # Exact match gets full score
+            if p1_clean == p2_clean:
+                total_score += 100
+            else:
+                # Prefix matching logic
+                shorter = min(p1_clean, p2_clean, key=len)
+                longer = max(p1_clean, p2_clean, key=len)
+
+                if len(shorter) >= 3 and longer.startswith(shorter):
+                    # Prefix match score based on length ratio
+                    ratio = len(shorter) / len(longer)
+                    if i == len(parts1) - 1:  # Last name - stricter
+                        total_score += 90 * ratio if ratio > 0.7 else 0
+                    else:  # First/middle name - more lenient
+                        total_score += 85 * ratio if ratio > 0.5 else 0
+
+        return total_score / len(parts1)
+
     def get_match_statistics(self) -> Dict:
         """Get comprehensive matching statistics"""
         total_attempts = sum(self.match_stats.values())

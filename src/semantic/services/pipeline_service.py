@@ -211,11 +211,21 @@ class DataPipelineService:
     def _get_existing_paper_keys(self) -> Set[str]:
         """Get existing paper keys from database"""
         try:
-            # If check days are configured, only check recent papers
+            # Check total number of papers in database first
+            count_result = self.db_manager.fetch_one("SELECT COUNT(*) as count FROM dblp_papers")
+            total_papers = count_result['count'] if count_result else 0
+
+            self.logger.info(f"Number of existing papers: {total_papers}")
+
+            # If database is empty, return empty set to process all papers
+            if total_papers == 0:
+                return set()
+
+            # If check days are configured and database has data, only check recent papers
             if self.config.incremental_check_days > 0:
                 cutoff_date = datetime.now() - timedelta(days=self.config.incremental_check_days)
                 query = """
-                SELECT key FROM dblp_papers 
+                SELECT key FROM dblp_papers
                 WHERE update_time >= %s OR create_time >= %s
                 """
                 results = self.db_manager.fetch_all(query, (cutoff_date, cutoff_date))
@@ -223,9 +233,9 @@ class DataPipelineService:
                 # Get all paper keys
                 query = "SELECT key FROM dblp_papers"
                 results = self.db_manager.fetch_all(query)
-            
+
             return {row['key'] for row in results}
-            
+
         except Exception as e:
             self.logger.error(f"Failed to get existing paper keys: {e}")
             return set()

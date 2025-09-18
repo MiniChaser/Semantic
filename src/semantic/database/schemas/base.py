@@ -8,7 +8,7 @@ from typing import Dict, List
 from ..connection import DatabaseManager
 from .paper import PaperSchema
 from .processing import ProcessingMetaSchema
-from .scheduler import SchedulerSchema
+from .processing_metadata import ProcessingMetadataSchema
 
 
 class DatabaseSchema:
@@ -21,7 +21,7 @@ class DatabaseSchema:
         # Initialize schema modules
         self.paper_schema = PaperSchema(db_manager)
         self.processing_schema = ProcessingMetaSchema(db_manager)
-        self.scheduler_schema = SchedulerSchema(db_manager)
+        self.processing_metadata_schema = ProcessingMetadataSchema(db_manager)
     
     def _setup_logger(self) -> logging.Logger:
         """Setup logging for schema management"""
@@ -47,13 +47,13 @@ class DatabaseSchema:
             if not self.paper_schema.create_table():
                 raise Exception("Failed to create dblp_papers table")
             
-            # Create processing metadata table
+            # Create processing metadata table (legacy)
             if not self.processing_schema.create_table():
                 raise Exception("Failed to create processing metadata table")
-            
-            # Create scheduler jobs table
-            if not self.scheduler_schema.create_table():
-                raise Exception("Failed to create scheduler jobs table")
+
+            # Create unified processing metadata table
+            if not self.processing_metadata_schema.create_table():
+                raise Exception("Failed to create processing metadata table")
             
             self.logger.info("Database schema creation completed successfully")
             return True
