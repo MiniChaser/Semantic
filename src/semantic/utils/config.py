@@ -16,9 +16,11 @@ class AppConfig:
     
     # DBLP configuration
     dblp_url: str = "https://dblp.org/xml/dblp.xml.gz"
+    dblp_dtd_url: str = "https://dblp.org/xml/dblp.dtd"
     download_dir: str = "external"
     compressed_file: str = "external/dblp.xml.gz"
     xml_file: str = "external/dblp.xml"
+    dtd_file: str = "external/dblp.dtd"
     
     # Processing configuration
     target_venues: Set[str] = field(default_factory=lambda: {'acl', 'naacl', 'emnlp', 'findings'})
@@ -58,9 +60,11 @@ class AppConfig:
         return cls(
             # DBLP configuration
             dblp_url=os.getenv('DBLP_URL', 'https://dblp.org/xml/dblp.xml.gz'),
+            dblp_dtd_url=os.getenv('DBLP_DTD_URL', 'https://dblp.org/xml/dblp.dtd'),
             download_dir=os.getenv('DOWNLOAD_DIR', 'external'),
             compressed_file=os.getenv('COMPRESSED_FILE', 'external/dblp.xml.gz'),
             xml_file=os.getenv('XML_FILE', 'external/dblp.xml'),
+            dtd_file=os.getenv('DTD_FILE', 'external/dblp.dtd'),
             
             # Processing configuration
             target_venues=target_venues,

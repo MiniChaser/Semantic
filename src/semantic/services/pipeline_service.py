@@ -259,18 +259,6 @@ class DataPipelineService:
         self.logger.info(f"Total papers in database: {db_stats.get('total_papers', 0)}")
         self.logger.info(f"Last update time: {db_stats.get('last_update', 'N/A')}")
 
-        # API fallback statistics
-        dblp_stats = self.dblp_service.parser.get_stats()
-        if dblp_stats.api_fallback_calls > 0:
-            self.logger.info("-" * 40)
-            self.logger.info("API Fallback Statistics:")
-            self.logger.info(f"Non-English characters detected: {dblp_stats.non_english_detected}")
-            self.logger.info(f"API fallback calls made: {dblp_stats.api_fallback_calls}")
-            self.logger.info(f"API fallback successful: {dblp_stats.api_fallback_success}")
-            self.logger.info(f"API fallback failures: {dblp_stats.api_fallback_failures}")
-            success_rate = (dblp_stats.api_fallback_success / dblp_stats.api_fallback_calls * 100) if dblp_stats.api_fallback_calls > 0 else 0
-            self.logger.info(f"API fallback success rate: {success_rate:.1f}%")
-
         # Statistics by venue
         venue_stats = db_stats.get('by_venue', {})
         if venue_stats:

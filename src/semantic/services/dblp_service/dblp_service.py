@@ -10,7 +10,7 @@ import requests
 import time
 import json
 from datetime import datetime
-from typing import List, Optional, Set, Dict, Any
+from typing import List, Optional, Set
 from dataclasses import dataclass
 from tqdm import tqdm
 from lxml import etree
@@ -25,10 +25,6 @@ class DBLPProcessingStats:
     filtered_papers: int = 0
     errors: int = 0
     venues_found: Set[str] = None
-    api_fallback_calls: int = 0
-    api_fallback_success: int = 0
-    api_fallback_failures: int = 0
-    non_english_detected: int = 0
 
     def __post_init__(self):
         if self.venues_found is None:
@@ -58,15 +54,20 @@ class DBLPDownloader:
         return logger
     
     def download_dblp_data(self, force_download: bool = False) -> bool:
-        """Download DBLP XML.gz file"""
+        """Download DBLP XML.gz file and DTD file"""
         try:
             # Create download directory
             os.makedirs(self.config.download_dir, exist_ok=True)
-            
-            # Check if file already exists and not forcing download
+
+            # Download DTD file first
+            if not self._download_dtd_file(force_download):
+                self.logger.error("DTD file download failed")
+                return False
+
+            # Check if XML file already exists and not forcing download
             if os.path.exists(self.config.compressed_file) and not force_download:
                 self.logger.info(f"File already exists: {self.config.compressed_file}")
-                
+
                 # Check file size, if too small may be incomplete download
                 file_size = os.path.getsize(self.config.compressed_file)
                 if file_size < 100 * 1024 * 1024:  # Less than 100MB
@@ -74,16 +75,16 @@ class DBLPDownloader:
                     os.remove(self.config.compressed_file)
                 else:
                     return True
-            
+
             self.logger.info(f"Starting DBLP data download: {self.config.dblp_url}")
-            
+
             # Initiate download request
             response = requests.get(self.config.dblp_url, stream=True)
             response.raise_for_status()
-            
+
             # Get file size
             total_size = int(response.headers.get('content-length', 0))
-            
+
             # Download file and show progress
             with open(self.config.compressed_file, 'wb') as f:
                 with tqdm(
@@ -96,12 +97,36 @@ class DBLPDownloader:
                         if chunk:
                             f.write(chunk)
                             pbar.update(len(chunk))
-            
+
             self.logger.info(f"Download completed: {self.config.compressed_file}")
             return True
-            
+
         except Exception as e:
             self.logger.error(f"Download failed: {e}")
+            return False
+
+    def _download_dtd_file(self, force_download: bool = False) -> bool:
+        """Download DBLP DTD file"""
+        try:
+            # Check if DTD file already exists and not forcing download
+            if os.path.exists(self.config.dtd_file) and not force_download:
+                self.logger.info(f"DTD file already exists: {self.config.dtd_file}")
+                return True
+
+            self.logger.info(f"Downloading DBLP DTD file: {self.config.dblp_dtd_url}")
+
+            # Download DTD file
+            response = requests.get(self.config.dblp_dtd_url)
+            response.raise_for_status()
+
+            with open(self.config.dtd_file, 'w', encoding='utf-8') as f:
+                f.write(response.text)
+
+            self.logger.info(f"DTD download completed: {self.config.dtd_file}")
+            return True
+
+        except Exception as e:
+            self.logger.error(f"DTD download failed: {e}")
             return False
     
     def extract_xml(self, force_extract: bool = False) -> bool:
@@ -150,11 +175,15 @@ class DBLPDownloader:
             if os.path.exists(self.config.compressed_file):
                 os.remove(self.config.compressed_file)
                 self.logger.info("Deleted compressed file")
-            
+
             if not keep_xml and os.path.exists(self.config.xml_file):
                 os.remove(self.config.xml_file)
                 self.logger.info("Deleted XML file")
-                
+
+            if not keep_xml and os.path.exists(self.config.dtd_file):
+                os.remove(self.config.dtd_file)
+                self.logger.info("Deleted DTD file")
+
         except Exception as e:
             self.logger.error(f"File cleanup failed: {e}")
 
@@ -166,7 +195,6 @@ class DBLPParser:
         self.config = config
         self.logger = self._setup_logger()
         self.stats = DBLPProcessingStats()
-        self._last_api_call = 0  # Rate limiting for API calls
     
     def _setup_logger(self) -> logging.Logger:
         """Setup logger"""
@@ -214,8 +242,7 @@ class DBLPParser:
                         tag='inproceedings',
                         dtd_validation=False,
                         load_dtd=True,
-                        resolve_entities=False,
-                        encoding='ISO-8859-1'
+                        resolve_entities=True
                     )
                     
                     last_position = 0
@@ -256,23 +283,13 @@ class DBLPParser:
                     # Process remaining papers
                     if batch_papers:
                         papers.extend(batch_papers)
-            
+
             self.logger.info(
                 f"Parsing completed: Total papers {self.stats.total_papers}, "
                 f"Filtered {self.stats.filtered_papers}, "
                 f"Errors {self.stats.errors}"
             )
 
-            # Log API fallback statistics if any calls were made
-            if self.stats.api_fallback_calls > 0:
-                self.logger.info(
-                    f"API Fallback Statistics: "
-                    f"Non-English detected: {self.stats.non_english_detected}, "
-                    f"API calls: {self.stats.api_fallback_calls}, "
-                    f"Success: {self.stats.api_fallback_success}, "
-                    f"Failures: {self.stats.api_fallback_failures}"
-                )
-            
             return papers
             
         except Exception as e:
@@ -312,27 +329,6 @@ class DBLPParser:
             title = self._clean_text(title_elem.text)
             cleaned_authors = [self._clean_text(author) for author in authors]
 
-            # Check for non-English characters in title or authors
-            has_non_english_title = self._has_non_english_chars(title)
-            has_non_english_authors = any(self._has_non_english_chars(author) for author in cleaned_authors)
-
-            if has_non_english_title or has_non_english_authors:
-                self.stats.non_english_detected += 1
-                self.logger.debug(f"Non-English characters detected in paper: {key}")
-
-                # Try API fallback
-                api_data = self._query_dblp_api(key)
-                if api_data:
-                    api_title, api_authors = self._extract_api_data(api_data)
-
-                    # Use API data to override XML data if available
-                    if api_title and has_non_english_title:
-                        title = api_title
-                        self.logger.debug(f"Title corrected via API for key: {key}")
-
-                    if api_authors and has_non_english_authors:
-                        cleaned_authors = api_authors
-                        self.logger.debug(f"Authors corrected via API for key: {key}")
 
             # Build paper record
             paper = DBLP_Paper(
@@ -391,113 +387,6 @@ class DBLPParser:
         """Reset statistics"""
         self.stats = DBLPProcessingStats()
 
-    def _has_non_english_chars(self, text: str) -> bool:
-        """Detect if text contains non-English characters (non-ASCII)"""
-        if not text:
-            return False
-
-        for char in text:
-            # ASCII characters have ord values 0-127
-            if ord(char) > 127:
-                return True
-        return False
-
-    def _query_dblp_api(self, paper_key: str) -> Optional[Dict[str, Any]]:
-        """Query DBLP API for paper information by key"""
-        if not self.config.enable_dblp_api_fallback:
-            return None
-
-        try:
-            # Rate limiting
-            current_time = time.time()
-            time_since_last = current_time - self._last_api_call
-            if time_since_last < self.config.dblp_api_rate_limit:
-                time.sleep(self.config.dblp_api_rate_limit - time_since_last)
-
-            self._last_api_call = time.time()
-            self.stats.api_fallback_calls += 1
-
-            # Build query URL - search by exact key
-            params = {
-                'q': f'key:{paper_key}',
-                'format': 'json',
-                'h': '1'  # Only need first result
-            }
-
-            retries = 0
-            while retries <= self.config.dblp_api_max_retries:
-                try:
-                    response = requests.get(
-                        self.config.dblp_api_base_url,
-                        params=params,
-                        timeout=self.config.dblp_api_timeout
-                    )
-                    response.raise_for_status()
-
-                    data = response.json()
-
-                    # Check if we have results
-                    if 'result' in data and 'hits' in data['result'] and 'hit' in data['result']['hits']:
-                        hits = data['result']['hits']['hit']
-                        if hits and len(hits) > 0:
-                            paper_info = hits[0].get('info', {})
-                            self.stats.api_fallback_success += 1
-
-                            self.logger.debug(f"API fallback successful for key: {paper_key}")
-                            return paper_info
-
-                    self.logger.debug(f"API fallback no results for key: {paper_key}")
-                    return None
-
-                except requests.RequestException as e:
-                    retries += 1
-                    self.logger.debug(f"API request failed (attempt {retries}): {e}")
-                    if retries <= self.config.dblp_api_max_retries:
-                        time.sleep(1 * retries)  # Exponential backoff
-
-            self.stats.api_fallback_failures += 1
-            return None
-
-        except Exception as e:
-            self.logger.debug(f"API fallback error for key {paper_key}: {e}")
-            self.stats.api_fallback_failures += 1
-            return None
-
-    def _extract_api_data(self, api_data: Dict[str, Any]) -> tuple[Optional[str], Optional[List[str]]]:
-        """Extract title and authors from API response data"""
-        try:
-            title = None
-            authors = []
-
-            # Extract title
-            if 'title' in api_data:
-                title_data = api_data['title']
-                if isinstance(title_data, str):
-                    title = title_data.strip()
-                elif isinstance(title_data, dict) and 'text' in title_data:
-                    title = title_data['text'].strip()
-
-            # Extract authors
-            if 'authors' in api_data:
-                authors_data = api_data['authors']
-                if isinstance(authors_data, dict) and 'author' in authors_data:
-                    author_list = authors_data['author']
-                    if isinstance(author_list, list):
-                        for author in author_list:
-                            if isinstance(author, dict) and 'text' in author:
-                                authors.append(author['text'].strip())
-                            elif isinstance(author, str):
-                                authors.append(author.strip())
-                    elif isinstance(author_list, dict) and 'text' in author_list:
-                        authors.append(author_list['text'].strip())
-                    elif isinstance(author_list, str):
-                        authors.append(author_list.strip())
-
-            return title, authors if authors else None
-
-        except Exception as e:
-            self.logger.debug(f"Error extracting API data: {e}")
-            return None, None
 
 
 class DBLPService:
@@ -581,25 +470,3 @@ class DBLPService:
         """Reset statistics"""
         self.parser.reset_stats()
 
-    def test_non_english_detection(self) -> Dict[str, bool]:
-        """Test non-English character detection with various examples"""
-        test_cases = {
-            "Simple English text": "This is a simple English title",
-            "German with umlauts": "Über die Mööglichkeit der Entwicklung",
-            "French accents": "Les données à traiter",
-            "Chinese characters": "机器学习与深度学习",
-            "Japanese text": "自然言語処理",
-            "Korean text": "한국어 자연어 처리",
-            "Arabic text": "معالجة اللغة الطبيعية",
-            "Mixed English-German": "Machine Learning für Künstliche Intelligenz",
-            "Empty string": "",
-            "Numbers and symbols": "123 ABC !@# $%^"
-        }
-
-        results = {}
-        for description, text in test_cases.items():
-            has_non_english = self.parser._has_non_english_chars(text)
-            results[description] = has_non_english
-            self.logger.info(f"Test '{description}': {text} -> {has_non_english}")
-
-        return results
