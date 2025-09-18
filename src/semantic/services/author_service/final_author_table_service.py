@@ -213,104 +213,145 @@ class FinalAuthorTableService:
             logger.error(f"Failed to populate final author table: {e}")
             return {'error': str(e)}
     
-    def _calculate_total_influential_citations(self, s2_author_id: str) -> int:
+    def _calculate_total_influential_citations(self, s2_author_ids: str) -> int:
         """
         Calculate total influential citations for an author from enriched_papers
-        
+
         Args:
-            s2_author_id: Semantic Scholar author ID
-            
+            s2_author_ids: Comma-separated Semantic Scholar author IDs
+
         Returns:
             Total influential citation count
         """
         try:
-            result = self.db_manager.fetch_one("""
+            if not s2_author_ids:
+                return 0
+
+            # Split and clean the author IDs
+            author_ids = [aid.strip() for aid in s2_author_ids.split(',') if aid.strip()]
+            if not author_ids:
+                return 0
+
+            # Create placeholder string for multiple IDs
+            placeholders = ','.join(['%s'] * len(author_ids))
+            result = self.db_manager.fetch_one(f"""
                 SELECT SUM(COALESCE(e.influentialcitationcount, 0)) as total_influential
                 FROM authorships a
                 JOIN enriched_papers e ON a.semantic_paper_id = e.semantic_paper_id
-                WHERE a.s2_author_id = %s 
+                WHERE a.s2_author_id IN ({placeholders})
                 AND e.semantic_paper_id IS NOT NULL
-            """, (s2_author_id,))
-            
+            """, tuple(author_ids))
+
             return int(result['total_influential']) if result and result['total_influential'] else 0
-            
+
         except Exception as e:
-            logger.warning(f"Error calculating influential citations for author {s2_author_id}: {e}")
+            logger.warning(f"Error calculating influential citations for author IDs {s2_author_ids}: {e}")
             return 0
     
-    def _calculate_semantic_scholar_paper_count(self, s2_author_id: str) -> int:
+    def _calculate_semantic_scholar_paper_count(self, s2_author_ids: str) -> int:
         """
         Calculate total paper count for an author from enriched_papers
-        
+
         Args:
-            s2_author_id: Semantic Scholar author ID
-            
+            s2_author_ids: Comma-separated Semantic Scholar author IDs
+
         Returns:
             Total paper count with Semantic Scholar data
         """
         try:
-            result = self.db_manager.fetch_one("""
+            if not s2_author_ids:
+                return 0
+
+            # Split and clean the author IDs
+            author_ids = [aid.strip() for aid in s2_author_ids.split(',') if aid.strip()]
+            if not author_ids:
+                return 0
+
+            # Create placeholder string for multiple IDs
+            placeholders = ','.join(['%s'] * len(author_ids))
+            result = self.db_manager.fetch_one(f"""
                 SELECT COUNT(DISTINCT e.semantic_paper_id) as paper_count
                 FROM authorships a
                 JOIN enriched_papers e ON a.semantic_paper_id = e.semantic_paper_id
-                WHERE a.s2_author_id = %s 
+                WHERE a.s2_author_id IN ({placeholders})
                 AND e.semantic_paper_id IS NOT NULL
-            """, (s2_author_id,))
-            
+            """, tuple(author_ids))
+
             return int(result['paper_count']) if result and result['paper_count'] else 0
-            
+
         except Exception as e:
-            logger.warning(f"Error calculating paper count for author {s2_author_id}: {e}")
+            logger.warning(f"Error calculating paper count for author IDs {s2_author_ids}: {e}")
             return 0
     
-    def _calculate_semantic_scholar_citation_count(self, s2_author_id: str) -> int:
+    def _calculate_semantic_scholar_citation_count(self, s2_author_ids: str) -> int:
         """
         Calculate total citation count for an author from enriched_papers
-        
+
         Args:
-            s2_author_id: Semantic Scholar author ID
-            
+            s2_author_ids: Comma-separated Semantic Scholar author IDs
+
         Returns:
             Total citation count across all author's papers
         """
         try:
-            result = self.db_manager.fetch_one("""
+            if not s2_author_ids:
+                return 0
+
+            # Split and clean the author IDs
+            author_ids = [aid.strip() for aid in s2_author_ids.split(',') if aid.strip()]
+            if not author_ids:
+                return 0
+
+            # Create placeholder string for multiple IDs
+            placeholders = ','.join(['%s'] * len(author_ids))
+            result = self.db_manager.fetch_one(f"""
                 SELECT SUM(COALESCE(e.semantic_citation_count, 0)) as total_citations
                 FROM authorships a
                 JOIN enriched_papers e ON a.semantic_paper_id = e.semantic_paper_id
-                WHERE a.s2_author_id = %s 
+                WHERE a.s2_author_id IN ({placeholders})
                 AND e.semantic_paper_id IS NOT NULL
-            """, (s2_author_id,))
-            
+            """, tuple(author_ids))
+
             return int(result['total_citations']) if result and result['total_citations'] else 0
-            
+
         except Exception as e:
-            logger.warning(f"Error calculating citation count for author {s2_author_id}: {e}")
+            logger.warning(f"Error calculating citation count for author IDs {s2_author_ids}: {e}")
             return 0
     
-    def _calculate_h_index(self, s2_author_id: str) -> int:
+    def _calculate_h_index(self, s2_author_ids: str) -> int:
         """
         Calculate H-index for an author based on their papers' citation counts
         H-index = the largest number h such that the author has h papers with at least h citations each
-        
+
         Args:
-            s2_author_id: Semantic Scholar author ID
-            
+            s2_author_ids: Comma-separated Semantic Scholar author IDs
+
         Returns:
             H-index value
         """
         try:
+            if not s2_author_ids:
+                return 0
+
+            # Split and clean the author IDs
+            author_ids = [aid.strip() for aid in s2_author_ids.split(',') if aid.strip()]
+            if not author_ids:
+                return 0
+
+            # Create placeholder string for multiple IDs
+            placeholders = ','.join(['%s'] * len(author_ids))
+
             # Get all papers and their citation counts for this author, sorted by citations descending
-            papers_citations = self.db_manager.fetch_all("""
+            papers_citations = self.db_manager.fetch_all(f"""
                 SELECT e.semantic_citation_count
                 FROM authorships a
                 JOIN enriched_papers e ON a.semantic_paper_id = e.semantic_paper_id
-                WHERE a.s2_author_id = %s 
-                AND e.semantic_paper_id IS NOT NULL 
+                WHERE a.s2_author_id IN ({placeholders})
+                AND e.semantic_paper_id IS NOT NULL
                 AND e.semantic_citation_count IS NOT NULL
                 ORDER BY e.semantic_citation_count DESC
-            """, (s2_author_id,))
-            
+            """, tuple(author_ids))
+
             # Calculate H-index
             h_index = 0
             for i, paper in enumerate(papers_citations, 1):
@@ -319,11 +360,11 @@ class FinalAuthorTableService:
                     h_index = i
                 else:
                     break
-            
+
             return h_index
-            
+
         except Exception as e:
-            logger.warning(f"Error calculating H-index for author {s2_author_id}: {e}")
+            logger.warning(f"Error calculating H-index for author IDs {s2_author_ids}: {e}")
             return 0
     
     def _extract_dblp_aliases(self, author_name: str) -> str:

@@ -62,9 +62,9 @@ def main():
     start_time = datetime.now()
     start_timestamp = time.time()
     
-    print("🚀 Starting Author Processing Phase 1")
+    print("Starting Author Processing Phase 1")
     print("=" * 60)
-    print(f"⏰ Started at: {start_time.strftime('%Y-%m-%d %H:%M:%S')}")
+    print(f"Started at: {start_time.strftime('%Y-%m-%d %H:%M:%S')}")
     print()
     
     try:
@@ -76,23 +76,23 @@ def main():
         # Load configuration and initialize database
         config = AppConfig.from_env()
         db_manager = get_db_manager()
-        logger.info("✅ Database connection established")
-        print("✅ Database connection established")
+        logger.info("Database connection established")
+        print("Database connection established")
         
         # Initialize services
         profile_service = AuthorProfileService(db_manager)
         final_table_service = FinalAuthorTableService(db_manager)
         
-        print("✅ All services initialized")
+        print("All services initialized")
         
         # Phase 1.1: Create and populate authorships table
         print("\n📋 Phase 1.1: Creating Authorships Table")
         print("-" * 40)
         
         if not profile_service.create_authorships_table():
-            print("❌ Failed to create authorships table")
+            print("Failed to create authorships table")
             return 1
-        print("✅ Authorships table created")
+        print("Authorships table created")
         
         authorship_stats = profile_service.populate_authorships_table()
         if 'error' in authorship_stats:
@@ -264,7 +264,7 @@ def main():
         return 0
         
     except Exception as e:
-        print(f"❌ Critical error: {e}")
+        print(f"Critical error: {e}")
         logging.getLogger(__name__).error(f"Phase 1 failed: {e}", exc_info=True)
         return 1
 

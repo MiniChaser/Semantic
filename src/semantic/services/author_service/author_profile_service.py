@@ -239,9 +239,9 @@ class AuthorProfileService:
             create_table_sql = """
             CREATE TABLE IF NOT EXISTS author_profiles (
                 id SERIAL PRIMARY KEY,
-                s2_author_id VARCHAR(255) UNIQUE,
-                dblp_author_name TEXT NOT NULL,
-                s2_author_name TEXT,
+                s2_author_id TEXT,  -- Changed to TEXT to support comma-separated multiple IDs
+                dblp_author_name TEXT NOT NULL UNIQUE,  -- Make DBLP name unique instead
+                s2_author_name TEXT,  -- Can contain comma-separated names
                 
                 -- Basic statistics
                 paper_count INTEGER DEFAULT 0,
@@ -289,8 +289,8 @@ class AuthorProfileService:
             
             # Create indexes
             indexes = [
-                "CREATE INDEX IF NOT EXISTS idx_author_profiles_s2_id ON author_profiles(s2_author_id);",
-                "CREATE INDEX IF NOT EXISTS idx_author_profiles_dblp_name ON author_profiles(dblp_author_name);",
+                # Note: s2_author_id now contains comma-separated values, so traditional indexing may be less effective
+                "CREATE INDEX IF NOT EXISTS idx_author_profiles_dblp_name ON author_profiles(dblp_author_name);",  # Primary lookup key
                 "CREATE INDEX IF NOT EXISTS idx_author_profiles_paper_count ON author_profiles(paper_count DESC);",
                 "CREATE INDEX IF NOT EXISTS idx_author_profiles_citations ON author_profiles(total_citations DESC);",
             ]
@@ -325,17 +325,17 @@ class AuthorProfileService:
                 'processing_errors': 0
             }
             
-            # Process authors with S2 IDs first (ensure unique S2 author IDs)
+            # Process authors with S2 IDs (grouped by DBLP name to ensure one record per DBLP author)
             s2_authors = self.db_manager.fetch_all("""
-                SELECT 
-                    s2_author_id,
-                    MIN(s2_author_name) as s2_author_name,
-                    MIN(dblp_author_name) as dblp_author_name,
+                SELECT
+                    STRING_AGG(DISTINCT s2_author_id, ',') as s2_author_ids,
+                    STRING_AGG(DISTINCT s2_author_name, ',') as s2_author_names,
+                    dblp_author_name,
                     COUNT(*) as paper_count,
                     STRING_AGG(DISTINCT semantic_paper_id, ';') as paper_ids
-                FROM authorships 
+                FROM authorships
                 WHERE s2_author_id IS NOT NULL
-                GROUP BY s2_author_id
+                GROUP BY dblp_author_name
                 ORDER BY paper_count DESC
             """)
             
@@ -383,16 +383,23 @@ class AuthorProfileService:
         
         # Get paper details for this author
         if has_s2_id:
-            papers = self.db_manager.fetch_all("""
-                SELECT 
-                    a.authorship_order,
-                    e.semantic_citation_count,
-                    e.semantic_year
-                FROM authorships a
-                JOIN enriched_papers e ON a.paper_id = e.id
-                WHERE a.s2_author_id = %s
-                ORDER BY a.authorship_order
-            """, (author['s2_author_id'],))
+            # Handle multiple S2 author IDs
+            s2_author_ids = author.get('s2_author_ids', '').split(',') if author.get('s2_author_ids') else []
+            if s2_author_ids and s2_author_ids[0]:  # Check if we have valid IDs
+                # Create placeholder string for multiple IDs
+                placeholders = ','.join(['%s'] * len(s2_author_ids))
+                papers = self.db_manager.fetch_all(f"""
+                    SELECT
+                        a.authorship_order,
+                        e.semantic_citation_count,
+                        e.semantic_year
+                    FROM authorships a
+                    JOIN enriched_papers e ON a.paper_id = e.id
+                    WHERE a.s2_author_id IN ({placeholders})
+                    ORDER BY a.authorship_order
+                """, tuple(s2_author_ids))
+            else:
+                papers = []
         else:
             papers = self.db_manager.fetch_all("""
                 SELECT 
@@ -437,9 +444,12 @@ class AuthorProfileService:
                     
                     # Check if this author is the last author for this paper
                     for last_auth in paper_last_authors:
-                        if has_s2_id and last_auth['s2_author_id'] == author['s2_author_id']:
-                            last_author_count += 1
-                            break
+                        if has_s2_id:
+                            # Check against any of the S2 author IDs
+                            s2_author_ids = author.get('s2_author_ids', '').split(',') if author.get('s2_author_ids') else []
+                            if last_auth['s2_author_id'] in s2_author_ids:
+                                last_author_count += 1
+                                break
                         elif not has_s2_id and last_auth['dblp_author_name'] == author['dblp_author_name']:
                             last_author_count += 1
                             break
@@ -468,9 +478,9 @@ class AuthorProfileService:
         data_completeness = sum(completeness_factors) / len(completeness_factors)
         
         profile = {
-            's2_author_id': author.get('s2_author_id'),
+            's2_author_id': author.get('s2_author_ids'),  # Now contains comma-separated IDs
             'dblp_author_name': author['dblp_author_name'],
-            's2_author_name': author.get('s2_author_name'),
+            's2_author_name': author.get('s2_author_names'),  # Now contains comma-separated names
             'paper_count': paper_count,
             'total_citations': total_citations,
             'avg_citations_per_paper': avg_citations,
