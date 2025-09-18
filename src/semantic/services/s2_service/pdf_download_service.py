@@ -41,7 +41,10 @@ class PDFDownloadService:
         logger = logging.getLogger(f'{__name__}.PDFDownloadService')
         logger.setLevel(logging.INFO)
         
-        if not logger.handlers:
+        # Don't add handlers if root logger is already configured
+        # This prevents duplicate logging when root logger has handlers
+        root_logger = logging.getLogger()
+        if not logger.handlers and not root_logger.handlers:
             handler = logging.StreamHandler()
             formatter = logging.Formatter(
                 '%(asctime)s - %(name)s - %(levelname)s - %(message)s'

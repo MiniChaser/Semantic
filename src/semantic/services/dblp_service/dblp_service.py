@@ -42,15 +42,18 @@ class DBLPDownloader:
         """Setup logger"""
         logger = logging.getLogger(f'{__name__}.DBLPDownloader')
         logger.setLevel(getattr(logging, self.config.log_level))
-        
-        if not logger.handlers:
+
+        # Don't add handlers if root logger is already configured
+        # This prevents duplicate logging when root logger has handlers
+        root_logger = logging.getLogger()
+        if not logger.handlers and not root_logger.handlers:
             handler = logging.StreamHandler()
             formatter = logging.Formatter(
                 '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
             )
             handler.setFormatter(formatter)
             logger.addHandler(handler)
-        
+
         return logger
     
     def download_dblp_data(self, force_download: bool = False) -> bool:
@@ -200,15 +203,18 @@ class DBLPParser:
         """Setup logger"""
         logger = logging.getLogger(f'{__name__}.DBLPParser')
         logger.setLevel(getattr(logging, self.config.log_level))
-        
-        if not logger.handlers:
+
+        # Don't add handlers if root logger is already configured
+        # This prevents duplicate logging when root logger has handlers
+        root_logger = logging.getLogger()
+        if not logger.handlers and not root_logger.handlers:
             handler = logging.StreamHandler()
             formatter = logging.Formatter(
                 '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
             )
             handler.setFormatter(formatter)
             logger.addHandler(handler)
-        
+
         return logger
     
     def parse_xml(self, incremental: bool = False, 
@@ -402,11 +408,14 @@ class DBLPService:
         """Setup logger"""
         logger = logging.getLogger(f'{__name__}.DBLPService')
         logger.setLevel(getattr(logging, self.config.log_level))
-        
-        if not logger.handlers:
+
+        # Don't add handlers if root logger is already configured
+        # This prevents duplicate logging when root logger has handlers
+        root_logger = logging.getLogger()
+        if not logger.handlers and not root_logger.handlers:
             # Create log directory
             os.makedirs('logs', exist_ok=True)
-            
+
             # File handler
             file_handler = logging.FileHandler(
                 f'logs/dblp_service_{datetime.now().strftime("%Y%m%d_%H%M%S")}.log'
@@ -415,17 +424,17 @@ class DBLPService:
                 '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
             )
             file_handler.setFormatter(file_formatter)
-            
+
             # Console handler
             console_handler = logging.StreamHandler()
             console_formatter = logging.Formatter(
                 '%(asctime)s - %(levelname)s - %(message)s'
             )
             console_handler.setFormatter(console_formatter)
-            
+
             logger.addHandler(file_handler)
             logger.addHandler(console_handler)
-        
+
         return logger
     
     def prepare_data(self, force_download: bool = False, force_extract: bool = False) -> bool:
