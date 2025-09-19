@@ -88,7 +88,6 @@ class FinalAuthorTablePandasService:
 
                 -- Internal tracking
                 s2_author_id TEXT,   -- Internal reference to author_profiles (can be comma-separated)
-                data_source_notes TEXT,      -- Processing metadata
                 created_at TIMESTAMP WITHOUT TIME ZONE DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP WITHOUT TIME ZONE DEFAULT CURRENT_TIMESTAMP
             );
@@ -381,10 +380,6 @@ class FinalAuthorTablePandasService:
         final_df['affiliations_snapshot'] = ''  # Empty as specified
         final_df['homepage'] = None  # TODO: S2 Author API
 
-        # Generate data source notes using vectorized operations
-        final_df['data_source_notes'] = final_df.apply(
-            lambda row: self._generate_data_source_notes_vectorized(row), axis=1
-        )
 
         # Ensure proper data types
         final_df['first_author_count'] = final_df['first_author_count'].fillna(0).astype('int32')
@@ -413,30 +408,6 @@ class FinalAuthorTablePandasService:
         else:
             return str(author_name)
 
-    def _generate_data_source_notes_vectorized(self, row: pd.Series) -> str:
-        """Generate metadata about data sources and processing for a single row"""
-        notes = []
-
-        if pd.notna(row.get('paper_count')):
-            notes.append(f"Papers: {int(row['paper_count'])}")
-
-        if pd.notna(row.get('total_citations')):
-            notes.append(f"Citations: {int(row['total_citations'])}")
-
-        if pd.notna(row.get('career_length')) and row['career_length'] > 0:
-            notes.append(f"Career: {int(row['career_length'])} years")
-
-        # Note data completeness issues
-        todo_items = [
-            "Google Scholar ID needed",
-            "S2 Author API metrics needed",
-            "CSRankings affiliation needed"
-        ]
-
-        if todo_items:
-            notes.append(f"TODO: {'; '.join(todo_items[:3])}")
-
-        return ' | '.join(notes) if notes else 'Processed with pandas optimization'
 
     def batch_insert_final_authors_pandas(self) -> bool:
         """
@@ -516,7 +487,7 @@ class FinalAuthorTablePandasService:
             'last_author_percentage', 'total_influential_citations',
             'semantic_scholar_citation_count', 'semantic_scholar_h_index',
             'name', 'name_snapshot', 'affiliations_snapshot', 'homepage',
-            's2_author_id', 'data_source_notes'
+            's2_author_id'
         ]
 
         # Ensure all required columns exist
@@ -531,7 +502,7 @@ class FinalAuthorTablePandasService:
         text_columns = ['note', 'google_scholarid', 'external_ids_dblp',
                        'semantic_scholar_affiliations', 'csrankings_affiliation',
                        'name', 'name_snapshot', 'affiliations_snapshot',
-                       'homepage', 's2_author_id', 'data_source_notes']
+                       'homepage', 's2_author_id']
 
         for col in text_columns:
             if col in insert_df.columns:
@@ -561,8 +532,8 @@ class FinalAuthorTablePandasService:
                 last_author_percentage, total_influential_citations,
                 semantic_scholar_citation_count, semantic_scholar_h_index,
                 name, name_snapshot, affiliations_snapshot, homepage,
-                s2_author_id, data_source_notes
-            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                s2_author_id
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """
 
             batch_size = 1000
@@ -595,8 +566,7 @@ class FinalAuthorTablePandasService:
                         row.get('name_snapshot', ''),
                         row.get('affiliations_snapshot', ''),
                         row.get('homepage'),
-                        row.get('s2_author_id', ''),
-                        row.get('data_source_notes', '')
+                        row.get('s2_author_id', '')
                     )
                     batch_values.append(values)
 
@@ -674,7 +644,7 @@ class FinalAuthorTablePandasService:
             sample_records = self.db_manager.fetch_all(f"""
                 SELECT
                     dblp_author, first_author_count, career_length,
-                    last_author_percentage, external_ids_dblp, data_source_notes,
+                    last_author_percentage, external_ids_dblp,
                     semantic_scholar_citation_count, semantic_scholar_h_index
                 FROM final_author_table
                 ORDER BY semantic_scholar_citation_count DESC, first_author_count DESC

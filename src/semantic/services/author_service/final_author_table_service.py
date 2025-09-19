@@ -90,7 +90,6 @@ class FinalAuthorTableService:
                 
                 -- Internal tracking
                 s2_author_id VARCHAR(255),   -- Internal reference to author_profiles
-                data_source_notes TEXT,      -- Processing metadata
                 created_at TIMESTAMP WITHOUT TIME ZONE DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP WITHOUT TIME ZONE DEFAULT CURRENT_TIMESTAMP
             );
@@ -187,8 +186,7 @@ class FinalAuthorTableService:
                         'name_snapshot': author['dblp_author_name'],
                         'affiliations_snapshot': '',  # Empty as specified
                         'homepage': None,  # TODO: S2 Author API
-                        's2_author_id': author['s2_author_id'],
-                        'data_source_notes': self._generate_data_source_notes(author)
+                        's2_author_id': author['s2_author_id']
                     }
                     
                     self._insert_final_author_record(final_author_record)
@@ -408,27 +406,6 @@ class FinalAuthorTableService:
             logger.warning(f"Error extracting aliases for {author_name}: {e}")
             return author_name
     
-    def _generate_data_source_notes(self, author: Dict) -> str:
-        """Generate metadata about data sources and processing"""
-        notes = []
-        
-        notes.append(f"Papers: {author['paper_count']}")
-        notes.append(f"Citations: {author['total_citations']}")
-        
-        if author['career_length'] and author['career_length'] > 0:
-            notes.append(f"Career: {author['career_length']} years")
-        
-        # Note data completeness issues
-        todo_items = []
-        todo_items.append("Google Scholar ID needed")
-        todo_items.append("S2 Author API metrics needed") 
-        todo_items.append("CSRankings affiliation needed")
-        todo_items.append("Top venue classification needed")
-        
-        if todo_items:
-            notes.append(f"TODO: {'; '.join(todo_items[:3])}")  # Limit to 3 main TODOs
-        
-        return ' | '.join(notes)
     
     def _is_complete_data(self, record: Dict) -> bool:
         """Check if author record has complete data (non-TODO fields)"""
@@ -453,9 +430,9 @@ class FinalAuthorTableService:
             last_author_percentage, total_influential_citations,
             semantic_scholar_citation_count, semantic_scholar_h_index,
             name, name_snapshot, affiliations_snapshot, homepage,
-            s2_author_id, data_source_notes
+            s2_author_id
         ) VALUES (
-            %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
+            %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
         )
         """
         
@@ -468,7 +445,7 @@ class FinalAuthorTableService:
             record['last_author_percentage'], record['total_influential_citations'],
             record['semantic_scholar_citation_count'], record['semantic_scholar_h_index'],
             record['name'], record['name_snapshot'], record['affiliations_snapshot'],
-            record['homepage'], record['s2_author_id'], record['data_source_notes']
+            record['homepage'], record['s2_author_id']
         )
         
         self.db_manager.execute_query(insert_sql, values)
@@ -591,7 +568,7 @@ class FinalAuthorTableService:
             sample_records = self.db_manager.fetch_all(f"""
                 SELECT 
                     dblp_author, first_author_count, career_length,
-                    last_author_percentage, external_ids_dblp, data_source_notes
+                    last_author_percentage, external_ids_dblp
                 FROM final_author_table
                 ORDER BY first_author_count DESC
                 LIMIT {limit}
