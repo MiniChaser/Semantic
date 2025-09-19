@@ -129,7 +129,7 @@ class FinalAuthorTablePandasService:
         try:
             logger.info("Loading all data for pandas processing...")
 
-            # Query 1: Load author profiles data
+            # Query 1: Load author profiles data 
             authors_query = """
             SELECT
                 p.s2_author_id,
@@ -143,7 +143,7 @@ class FinalAuthorTablePandasService:
                 p.first_author_ratio,
                 p.last_author_ratio
             FROM author_profiles p
-            WHERE p.s2_author_id IS NOT NULL
+            WHERE p.dblp_author_name IS NOT NULL
             ORDER BY p.paper_count DESC
             """
 
@@ -156,15 +156,15 @@ class FinalAuthorTablePandasService:
             logger.info(f"Loaded {len(self.authors_df)} author profiles")
 
             # Query 2: Load authorships data for all authors
-            author_ids = list(self.authors_df['s2_author_id'].dropna())
-            if not author_ids:
-                logger.warning("No valid author IDs found")
-                return False
+            author_ids = list(self.authors_df[
+                (self.authors_df['s2_author_id'].notna()) &
+                (self.authors_df['s2_author_id'] != '')
+            ]['s2_author_id'])
 
             # Split author IDs and create a comprehensive list
             all_author_ids = set()
             for author_ids_str in author_ids:
-                if author_ids_str:
+                if author_ids_str and author_ids_str.strip():
                     ids = [aid.strip() for aid in str(author_ids_str).split(',') if aid.strip()]
                     all_author_ids.update(ids)
 
@@ -234,16 +234,29 @@ class FinalAuthorTablePandasService:
             # Start with author profiles data
             final_df = self.authors_df.copy()
 
-            # Merge with authorships and papers data for comprehensive calculations
-            if not self.authorships_df.empty and not self.papers_df.empty:
+            matched_authors = final_df[
+                (final_df['s2_author_id'].notna()) &
+                (final_df['s2_author_id'] != '')
+            ].copy()
+
+            unmatched_authors = final_df[
+                (final_df['s2_author_id'].isna()) |
+                (final_df['s2_author_id'] == '')
+            ].copy()
+
+            logger.info(f"Processing {len(matched_authors)} matched authors and {len(unmatched_authors)} unmatched authors")
+
+            if not matched_authors.empty and not self.authorships_df.empty and not self.papers_df.empty:
                 # Create comprehensive dataset for calculations
                 author_paper_data = self._create_author_paper_dataset()
-
-                # Calculate metrics using pandas vectorized operations
-                final_df = self._calculate_pandas_metrics(final_df, author_paper_data)
+                matched_authors = self._calculate_pandas_metrics(matched_authors, author_paper_data)
             else:
-                logger.warning("No authorship or papers data available, using basic profiles data")
-                final_df = self._add_default_metrics(final_df)
+                logger.info("Using basic metrics for matched authors due to missing authorship/papers data")
+                matched_authors = self._add_default_metrics(matched_authors)
+
+            unmatched_authors = self._add_default_metrics(unmatched_authors)
+
+            final_df = pd.concat([matched_authors, unmatched_authors], ignore_index=True)
 
             # Add additional fields
             final_df = self._prepare_final_author_records(final_df)
