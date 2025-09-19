@@ -88,35 +88,34 @@ class AuthorshipPandasService:
 
     def load_all_papers_data(self) -> bool:
         """
-        Load ALL papers with semantic_authors data in a single query
-        This fixes the data completeness issue where only ~4000/36976 papers were processed
+        Load ALL papers with dblp_authors data to ensure complete coverage
+        This ensures all DBLP authors are included in the authorships table
 
         Returns:
             True if data loaded successfully, False otherwise
         """
         try:
-            logger.info("Loading all papers with semantic_authors data...")
+            logger.info("Loading all papers with dblp_authors data...")
 
-            # Load ALL papers with both dblp_authors and semantic_authors in one query
+            # Load ALL papers with dblp_authors (semantic_authors is optional)
             papers_query = """
             SELECT
                 id, semantic_paper_id, dblp_title,
                 dblp_authors, semantic_authors
             FROM enriched_papers
-            WHERE semantic_authors IS NOT NULL
-              AND dblp_authors IS NOT NULL
+            WHERE dblp_authors IS NOT NULL
             ORDER BY id
             """
 
             papers_data = self.db_manager.fetch_all(papers_query)
 
             if not papers_data:
-                logger.warning("No papers data found with both author sources")
+                logger.warning("No papers data found with dblp_authors")
                 return False
 
             # Convert to pandas DataFrame for efficient processing
             self.papers_df = pd.DataFrame(papers_data)
-            logger.info(f"Loaded {len(self.papers_df)} papers with complete author data")
+            logger.info(f"Loaded {len(self.papers_df)} papers with dblp_authors data")
 
             return True
 
@@ -154,13 +153,19 @@ class AuthorshipPandasService:
                 if isinstance(s2_authors, str):
                     s2_authors = json.loads(s2_authors)
 
-                if not dblp_authors or not s2_authors:
+                if not dblp_authors:
                     continue
 
-                # Perform author matching using existing AuthorMatcher
-                matched_pairs, unmatched_dblp = self.matcher.match_authors_enhanced(
-                    dblp_authors, s2_authors
-                )
+                # Handle papers with both DBLP and Semantic Scholar authors
+                if s2_authors:
+                    # Perform author matching using existing AuthorMatcher
+                    matched_pairs, unmatched_dblp = self.matcher.match_authors_enhanced(
+                        dblp_authors, s2_authors
+                    )
+                else:
+                    # Papers with only DBLP authors - treat all as unmatched
+                    matched_pairs = {}
+                    unmatched_dblp = dblp_authors
 
                 authorship_order = 1
 
@@ -299,6 +304,52 @@ class AuthorshipPandasService:
 
         return insert_df[columns_to_insert]
 
+    def ensure_all_dblp_authors_included(self) -> Dict:
+        """
+        Verify and ensure all DBLP authors are included in the authorships table
+
+        Returns:
+            Dictionary with verification statistics and any missing authors found
+        """
+        try:
+            logger.info("Verifying all DBLP authors are included in authorships...")
+
+            # Query to find DBLP authors not in authorships table (similar to user's SQL)
+            missing_authors_query = """
+            SELECT DISTINCT t.author, COUNT(*) as paper_count
+            FROM (
+                SELECT id, jsonb_array_elements_text(dblp_authors) as author
+                FROM enriched_papers
+                WHERE dblp_authors IS NOT NULL
+            ) t
+            WHERE t.author NOT IN (
+                SELECT DISTINCT dblp_author_name
+                FROM authorships
+            )
+            GROUP BY t.author
+            ORDER BY paper_count DESC
+            """
+
+            missing_authors = self.db_manager.fetch_all(missing_authors_query)
+
+            verification_stats = {
+                'missing_authors_count': len(missing_authors),
+                'missing_authors': missing_authors[:20] if missing_authors else [],  # Show top 20
+                'verification_complete': len(missing_authors) == 0
+            }
+
+            if missing_authors:
+                logger.warning(f"Found {len(missing_authors)} DBLP authors not in authorships table")
+                logger.info(f"Top missing authors: {missing_authors[:5]}")
+            else:
+                logger.info("All DBLP authors are included in authorships table")
+
+            return verification_stats
+
+        except Exception as e:
+            logger.error(f"Failed to verify DBLP author completeness: {e}")
+            return {'error': str(e)}
+
     def _fallback_to_batch_insert(self) -> bool:
         """
         Fallback to the original batch insert method if to_sql fails
@@ -380,6 +431,9 @@ class AuthorshipPandasService:
             if not self.batch_insert_authorships_pandas():
                 return {'error': 'Failed to insert authorships data'}
 
+            # Step 4: Verify all DBLP authors are included
+            verification_stats = self.ensure_all_dblp_authors_included()
+
             # Calculate statistics
             end_time = datetime.now()
             processing_time = (end_time - start_time).total_seconds()
@@ -395,8 +449,16 @@ class AuthorshipPandasService:
                 'unmatched_authors': unmatched_count,
                 'processing_time_seconds': processing_time,
                 'optimization_method': 'pandas_batch_processing',
-                'data_completeness': 'full_coverage'
+                'data_completeness': 'complete_dblp_coverage'
             }
+
+            # Add verification results to stats
+            if 'error' not in verification_stats:
+                stats.update({
+                    'missing_authors_count': verification_stats.get('missing_authors_count', 0),
+                    'verification_complete': verification_stats.get('verification_complete', False),
+                    'missing_authors_sample': verification_stats.get('missing_authors', [])[:5]
+                })
 
             logger.info("Pandas-optimized authorships population completed successfully")
             return stats
