@@ -370,78 +370,71 @@ class FinalAuthorTablePandasService:
                 }).reset_index()
                 dblp_paper_counts.columns = ['dblp_author_name', 'semantic_scholar_paper_count']
 
-        # Calculate other metrics for authors with S2 IDs
-        s2_metrics = pd.DataFrame()
+        # Calculate total_influential_citations for ALL authors using DBLP names
+        dblp_influential_citations = pd.DataFrame()
+        if not author_paper_data.empty:
+            dblp_influential_citations = author_paper_data.groupby('dblp_author_name').agg({
+                'influentialcitationcount': 'sum',  # Total influential citations
+            }).reset_index()
+
+            dblp_influential_citations.columns = [
+                'dblp_author_name',
+                'total_influential_citations'
+            ]
+
+        # Calculate H-index for authors with S2 IDs (still use S2 IDs for H-index)
+        s2_h_index = pd.DataFrame()
         if not author_paper_data.empty:
             # Filter out null S2 author IDs for S2-based grouping
             s2_data = author_paper_data[author_paper_data['s2_author_id'].notna() & (author_paper_data['s2_author_id'] != '')]
             if not s2_data.empty:
-                s2_metrics = s2_data.groupby('s2_author_id').agg({
-                    'influentialcitationcount': 'sum',  # Total influential citations
-                }).reset_index()
-
-                s2_metrics.columns = [
-                    's2_author_id',
-                    'total_influential_citations'
-                ]
-
                 # Calculate H-index for S2 authors
                 s2_h_index = s2_data.groupby('s2_author_id')['semantic_citation_count'].apply(
                     lambda x: self._calculate_h_index_vectorized(x.tolist())
                 ).reset_index()
                 s2_h_index.columns = ['s2_author_id', 'semantic_scholar_h_index']
 
-                s2_metrics = s2_metrics.merge(s2_h_index, on='s2_author_id', how='left')
-
-        # Calculate other metrics for authors without S2 IDs (using DBLP names)
-        dblp_other_metrics = pd.DataFrame()
+        # Calculate H-index for authors without S2 IDs (using DBLP names)
+        dblp_h_index = pd.DataFrame()
         dblp_data = author_paper_data[
             author_paper_data['s2_author_id'].isna() |
             (author_paper_data['s2_author_id'] == '')
         ]
         if not dblp_data.empty:
-            dblp_other_metrics = dblp_data.groupby('dblp_author_name').agg({
-                'influentialcitationcount': 'sum',  # Total influential citations
-            }).reset_index()
-
-            dblp_other_metrics.columns = [
-                'dblp_author_name',
-                'total_influential_citations'
-            ]
-
             # Calculate H-index for DBLP-only authors
             dblp_h_index = dblp_data.groupby('dblp_author_name')['semantic_citation_count'].apply(
                 lambda x: self._calculate_h_index_vectorized(x.tolist())
             ).reset_index()
             dblp_h_index.columns = ['dblp_author_name', 'semantic_scholar_h_index']
 
-            dblp_other_metrics = dblp_other_metrics.merge(dblp_h_index, on='dblp_author_name', how='left')
-
         # Merge paper counts (for ALL authors by DBLP name)
         if not dblp_paper_counts.empty:
             final_df = final_df.merge(dblp_paper_counts, on='dblp_author_name', how='left')
             logger.info(f"Applied DBLP-based paper counts to all authors")
 
-        # Merge S2 metrics back to final dataframe
-        if not s2_metrics.empty:
-            final_df = final_df.merge(s2_metrics, on='s2_author_id', how='left')
-            logger.info(f"Applied S2-based metrics to {len(s2_metrics)} authors")
+        # Merge total_influential_citations (calculated using DBLP names for ALL authors)
+        if not dblp_influential_citations.empty:
+            final_df = final_df.merge(dblp_influential_citations, on='dblp_author_name', how='left')
+            logger.info(f"Applied DBLP-based total_influential_citations to all authors")
 
-        # Merge DBLP metrics for authors without S2 IDs
-        if not dblp_other_metrics.empty:
-            final_df = final_df.merge(dblp_other_metrics, on='dblp_author_name', how='left', suffixes=('', '_dblp'))
+        # Merge S2 H-index for authors with S2 IDs
+        if not s2_h_index.empty:
+            final_df = final_df.merge(s2_h_index, on='s2_author_id', how='left')
+            logger.info(f"Applied S2-based H-index to {len(s2_h_index)} authors")
 
-            # For authors without S2 metrics, use DBLP metrics
+        # Merge DBLP H-index for authors without S2 IDs
+        if not dblp_h_index.empty:
+            final_df = final_df.merge(dblp_h_index, on='dblp_author_name', how='left', suffixes=('', '_dblp'))
+
+            # For authors without S2 H-index, use DBLP H-index
             mask_no_s2 = (final_df['s2_author_id'].isna()) | (final_df['s2_author_id'] == '')
-
-            final_df.loc[mask_no_s2, 'total_influential_citations'] = final_df.loc[mask_no_s2, 'total_influential_citations_dblp'].fillna(0)
             final_df.loc[mask_no_s2, 'semantic_scholar_h_index'] = final_df.loc[mask_no_s2, 'semantic_scholar_h_index_dblp'].fillna(0)
 
-            # Drop temporary columns
-            dblp_temp_cols = [col for col in final_df.columns if col.endswith('_dblp')]
-            final_df = final_df.drop(columns=dblp_temp_cols)
+            # Drop temporary H-index columns
+            if 'semantic_scholar_h_index_dblp' in final_df.columns:
+                final_df = final_df.drop(columns=['semantic_scholar_h_index_dblp'])
 
-            logger.info(f"Applied DBLP-based metrics to authors without S2 IDs")
+            logger.info(f"Applied DBLP-based H-index to authors without S2 IDs")
 
         # Fill missing values for all authors
         final_df['semantic_scholar_paper_count'] = final_df['semantic_scholar_paper_count'].fillna(0)
