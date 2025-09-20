@@ -235,13 +235,14 @@ class FinalAuthorTablePandasService:
                 dblp_placeholders = ','.join(['%s'] * len(all_dblp_names))
                 authorships_dblp_query = f"""
                 SELECT
+                    a.paper_id,
                     a.s2_author_id,
-                    a.semantic_paper_id,
                     a.dblp_author_name,
                     a.authorship_order
                 FROM authorships a
                 WHERE a.dblp_author_name IN ({dblp_placeholders})
                 AND a.dblp_author_name IS NOT NULL
+                AND a.s2_author_id IS NOT NULL
                 """
 
                 dblp_authorships_data = self.db_manager.fetch_all(authorships_dblp_query, tuple(all_dblp_names))
@@ -260,9 +261,9 @@ class FinalAuthorTablePandasService:
                     paper_placeholders = ','.join(['%s'] * len(paper_ids))
                     papers_query = f"""
                     SELECT
-                        e.semantic_paper_id,
                         e.semantic_citation_count,
-                        e.influentialcitationcount
+                        e.influentialcitationcount,
+                        e.id
                     FROM enriched_papers e
                     WHERE e.semantic_paper_id IN ({paper_placeholders})
                     AND e.semantic_paper_id IS NOT NULL
@@ -340,9 +341,11 @@ class FinalAuthorTablePandasService:
         This enables vectorized calculations across all author-paper relationships
         """
         # Merge authorships with papers
+        # Merge using authorships' paper_id and papers' id columns
         author_papers = self.authorships_df.merge(
             self.papers_df,
-            on='semantic_paper_id',
+            left_on='paper_id',
+            right_on='id',
             how='left'
         )
 
