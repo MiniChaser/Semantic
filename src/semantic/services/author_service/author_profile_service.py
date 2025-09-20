@@ -328,13 +328,13 @@ class AuthorProfileService:
             # Process authors with S2 IDs (grouped by DBLP name to ensure one record per DBLP author)
             s2_authors = self.db_manager.fetch_all("""
                 SELECT
-                    STRING_AGG(DISTINCT s2_author_id, ',') as s2_author_ids,
-                    STRING_AGG(DISTINCT s2_author_name, ',') as s2_author_names,
+                    STRING_AGG(DISTINCT CASE WHEN s2_author_id != '' THEN s2_author_id END, ',') as s2_author_ids,
+                    STRING_AGG(DISTINCT CASE WHEN s2_author_name != '' THEN s2_author_name END, ',') as s2_author_names,
                     dblp_author_name,
                     COUNT(*) as paper_count,
                     STRING_AGG(DISTINCT semantic_paper_id, ';') as paper_ids
                 FROM authorships
-                WHERE s2_author_id IS NOT NULL
+                WHERE s2_author_id IS NOT NULL AND s2_author_id != ''
                 GROUP BY dblp_author_name
                 ORDER BY paper_count DESC
             """)

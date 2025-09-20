@@ -236,9 +236,12 @@ class AuthorProfilePandasService:
                 first_author_ratio = first_author_count / paper_count if paper_count > 0 else 0
                 last_author_ratio = last_author_count / paper_count if paper_count > 0 else 0
 
-                # S2 author information aggregation
+                # S2 author information aggregation - filter out empty strings
                 s2_author_ids = author_data['s2_author_id'].dropna().unique()
+                s2_author_ids = [id for id in s2_author_ids if id != '']  # Filter empty strings
+
                 s2_author_names = author_data['s2_author_name'].dropna().unique()
+                s2_author_names = [name for name in s2_author_names if name != '']  # Filter empty strings
 
                 s2_ids_str = ','.join(s2_author_ids) if len(s2_author_ids) > 0 else None
                 s2_names_str = ','.join(s2_author_names) if len(s2_author_names) > 0 else None
