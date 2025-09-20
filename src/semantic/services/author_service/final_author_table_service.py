@@ -176,7 +176,7 @@ class FinalAuthorTableService:
                         'dblp_top_paper_total_paper_captured': 0,  # TODO: Top venue definition
                         'dblp_top_paper_last_author_count': 0,    # TODO: Top venue definition  
                         'first_author_count': author['first_author_count'],
-                        'semantic_scholar_paper_count': self._calculate_semantic_scholar_paper_count(author['s2_author_id']),
+                        'semantic_scholar_paper_count': self._calculate_semantic_scholar_paper_count(author['dblp_author_name']),
                         'career_length': author['career_length'],
                         'last_author_percentage': last_author_percentage,
                         'total_influential_citations': self._calculate_total_influential_citations(author['s2_author_id']),
@@ -246,39 +246,31 @@ class FinalAuthorTableService:
             logger.warning(f"Error calculating influential citations for author IDs {s2_author_ids}: {e}")
             return 0
     
-    def _calculate_semantic_scholar_paper_count(self, s2_author_ids: str) -> int:
+    def _calculate_semantic_scholar_paper_count(self, dblp_author_name: str) -> int:
         """
-        Calculate total paper count for an author from enriched_papers
+        Calculate total paper count for an author from authorships where semantic_paper_id is not null
 
         Args:
-            s2_author_ids: Comma-separated Semantic Scholar author IDs
+            dblp_author_name: DBLP author name
 
         Returns:
             Total paper count with Semantic Scholar data
         """
         try:
-            if not s2_author_ids:
+            if not dblp_author_name:
                 return 0
 
-            # Split and clean the author IDs
-            author_ids = [aid.strip() for aid in s2_author_ids.split(',') if aid.strip()]
-            if not author_ids:
-                return 0
-
-            # Create placeholder string for multiple IDs
-            placeholders = ','.join(['%s'] * len(author_ids))
-            result = self.db_manager.fetch_one(f"""
-                SELECT COUNT(DISTINCT e.semantic_paper_id) as paper_count
-                FROM authorships a
-                JOIN enriched_papers e ON a.semantic_paper_id = e.semantic_paper_id
-                WHERE a.s2_author_id IN ({placeholders})
-                AND e.semantic_paper_id IS NOT NULL
-            """, tuple(author_ids))
+            result = self.db_manager.fetch_one("""
+                SELECT COUNT(*) as paper_count
+                FROM authorships
+                WHERE semantic_paper_id IS NOT NULL
+                AND dblp_author_name = %s
+            """, (dblp_author_name,))
 
             return int(result['paper_count']) if result and result['paper_count'] else 0
 
         except Exception as e:
-            logger.warning(f"Error calculating paper count for author IDs {s2_author_ids}: {e}")
+            logger.warning(f"Error calculating paper count for author {dblp_author_name}: {e}")
             return 0
     
     def _calculate_semantic_scholar_citation_count(self, s2_author_ids: str) -> int:
