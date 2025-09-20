@@ -104,185 +104,182 @@ class AuthorMatcher:
     
     def match_authors_enhanced(self, dblp_authors: List[str], s2_authors: List[Dict]) -> Tuple[Dict, List]:
         """
-        Enhanced multi-tier author matching algorithm
-        
+        Enhanced multi-tier author matching algorithm with position-aware disambiguation
+
         Args:
             dblp_authors: List of DBLP author name strings
             s2_authors: List of S2 author objects with 'name' and 'authorId'
-            
+
         Returns:
             Tuple of (matched_pairs_dict, unmatched_dblp_authors)
         """
         if not dblp_authors or not s2_authors:
             return {}, dblp_authors
-        
+
         # Filter valid S2 authors
         valid_s2_authors = [
-            author for author in s2_authors 
+            author for author in s2_authors
             if author.get('name') and str(author['name']).strip()
         ]
-        
+
         if not valid_s2_authors:
             return {}, dblp_authors
-        
-        # Normalize all names
-        dblp_normalized = {self.normalize_name(name): name for name in dblp_authors}
-        s2_normalized = {self.normalize_name(author['name']): author for author in valid_s2_authors}
-        
-        # Initialize tracking sets
+
+        # Create position-aware author lists instead of dictionaries to prevent loss
+        dblp_data = []
+        for i, name in enumerate(dblp_authors):
+            normalized = self.normalize_name(name)
+            dblp_data.append({
+                'original': name,
+                'normalized': normalized,
+                'position': i,
+                'matched': False
+            })
+
+        s2_data = []
+        for i, author in enumerate(valid_s2_authors):
+            normalized = self.normalize_name(author['name'])
+            s2_data.append({
+                'original': author,
+                'normalized': normalized,
+                'position': i,
+                'matched': False
+            })
+
+        # Initialize tracking
         matched = {}
-        remaining_dblp = set(dblp_normalized.keys())
-        remaining_s2 = set(s2_normalized.keys())
-        
+
         # Tier 1: Exact full name matching
-        exact_matches = remaining_dblp.intersection(remaining_s2)
-        for norm_name in exact_matches:
-            matched[dblp_normalized[norm_name]] = s2_normalized[norm_name]
-            remaining_dblp.remove(norm_name)
-            remaining_s2.remove(norm_name)
-            self.match_stats['exact_matches'] += 1
-        
-        # Tier 2: Enhanced initialism matching (F. Last <-> FirstName Last)
-        for dblp_norm in list(remaining_dblp):
-            dblp_parts = dblp_norm.split()
+        for dblp_item in dblp_data:
+            if dblp_item['matched']:
+                continue
+            for s2_item in s2_data:
+                if s2_item['matched']:
+                    continue
+                if dblp_item['normalized'] == s2_item['normalized']:
+                    matched[dblp_item['original']] = s2_item['original']
+                    dblp_item['matched'] = True
+                    s2_item['matched'] = True
+                    self.match_stats['exact_matches'] += 1
+                    break
+
+        # Tier 2: Position-aware disambiguation for duplicate normalized names
+        # This is the key fix for the "Zhiyuan Liu 0010" vs "Zhiyuan Liu 0001" issue
+        duplicates_map = {}
+        for dblp_item in dblp_data:
+            if dblp_item['matched']:
+                continue
+            norm = dblp_item['normalized']
+            if norm not in duplicates_map:
+                duplicates_map[norm] = {'dblp': [], 's2': []}
+            duplicates_map[norm]['dblp'].append(dblp_item)
+
+        for s2_item in s2_data:
+            if s2_item['matched']:
+                continue
+            norm = s2_item['normalized']
+            if norm in duplicates_map:
+                duplicates_map[norm]['s2'].append(s2_item)
+
+        # Handle duplicates with position-based matching
+        for norm, items in duplicates_map.items():
+            dblp_items = items['dblp']
+            s2_items = items['s2']
+
+            if len(dblp_items) > 1 and len(s2_items) > 1:
+                # Multiple authors with same normalized name - use position matching
+                for dblp_item in dblp_items:
+                    if dblp_item['matched']:
+                        continue
+                    # Find S2 author with closest position
+                    best_match = None
+                    best_distance = float('inf')
+
+                    for s2_item in s2_items:
+                        if s2_item['matched']:
+                            continue
+                        distance = abs(dblp_item['position'] - s2_item['position'])
+                        if distance < best_distance:
+                            best_distance = distance
+                            best_match = s2_item
+
+                    if best_match:
+                        matched[dblp_item['original']] = best_match['original']
+                        dblp_item['matched'] = True
+                        best_match['matched'] = True
+                        self.match_stats['positional_matches'] += 1
+
+        # Tier 3: Enhanced initialism matching for remaining authors
+        for dblp_item in dblp_data:
+            if dblp_item['matched']:
+                continue
+            dblp_parts = dblp_item['normalized'].split()
             if len(dblp_parts) >= 2:
-                # Create multiple initialism patterns
-                dblp_patterns = []
-                
-                # Pattern 1: F Last (first initial + last name)
-                dblp_patterns.append(''.join(part[0] for part in dblp_parts[:-1]) + ' ' + dblp_parts[-1])
-                
-                # Pattern 2: F. Last (with dots)
-                dblp_patterns.append('.'.join(part[0] for part in dblp_parts[:-1]) + '. ' + dblp_parts[-1])
-                
-                # Pattern 3: Handle middle initials (F M Last -> F. M. Last)
-                if len(dblp_parts) > 2:
-                    dblp_patterns.append(' '.join(part[0] + '.' for part in dblp_parts[:-1]) + ' ' + dblp_parts[-1])
-                
-                for s2_norm in list(remaining_s2):
-                    s2_parts = s2_norm.split()
+                # Create initialism patterns
+                dblp_patterns = [
+                    ''.join(part[0] for part in dblp_parts[:-1]) + ' ' + dblp_parts[-1],
+                    '.'.join(part[0] for part in dblp_parts[:-1]) + '. ' + dblp_parts[-1]
+                ]
+
+                for s2_item in s2_data:
+                    if s2_item['matched']:
+                        continue
+                    s2_parts = s2_item['normalized'].split()
                     if len(s2_parts) >= 2:
-                        # Create S2 patterns
-                        s2_patterns = []
-                        s2_patterns.append(''.join(part[0] for part in s2_parts[:-1]) + ' ' + s2_parts[-1])
-                        s2_patterns.append('.'.join(part[0] for part in s2_parts[:-1]) + '. ' + s2_parts[-1])
-                        if len(s2_parts) > 2:
-                            s2_patterns.append(' '.join(part[0] + '.' for part in s2_parts[:-1]) + ' ' + s2_parts[-1])
-                        
-                        # Cross-match all patterns
-                        pattern_matched = False
+                        s2_patterns = [
+                            ''.join(part[0] for part in s2_parts[:-1]) + ' ' + s2_parts[-1],
+                            '.'.join(part[0] for part in s2_parts[:-1]) + '. ' + s2_parts[-1]
+                        ]
+
+                        # Check pattern matches
                         for dblp_pattern in dblp_patterns:
                             for s2_pattern in s2_patterns:
                                 if dblp_pattern == s2_pattern:
-                                    matched[dblp_normalized[dblp_norm]] = s2_normalized[s2_norm]
-                                    remaining_dblp.remove(dblp_norm)
-                                    remaining_s2.remove(s2_norm)
+                                    matched[dblp_item['original']] = s2_item['original']
+                                    dblp_item['matched'] = True
+                                    s2_item['matched'] = True
                                     self.match_stats['initialism_matches'] += 1
-                                    pattern_matched = True
                                     break
-                            if pattern_matched:
+                            if dblp_item['matched']:
                                 break
-                        if pattern_matched:
+                        if dblp_item['matched']:
                             break
-        
-        # Tier 3: Structural interpretation matching
-        for dblp_norm in list(remaining_dblp):
-            dblp_interpretations = self.get_name_interpretations(dblp_norm)
-            
-            for s2_norm in list(remaining_s2):
-                s2_interpretations = self.get_name_interpretations(s2_norm)
-                
-                # Check if any interpretations match
-                matched_interpretation = False
-                for dblp_interp in dblp_interpretations:
-                    for s2_interp in s2_interpretations:
-                        if dblp_interp == s2_interp and dblp_interp != ('', ''):
-                            matched[dblp_normalized[dblp_norm]] = s2_normalized[s2_norm]
-                            remaining_dblp.remove(dblp_norm)
-                            remaining_s2.remove(s2_norm)
-                            self.match_stats['structural_matches'] += 1
-                            matched_interpretation = True
-                            break
-                    if matched_interpretation:
-                        break
-                if matched_interpretation:
-                    break
-        
-        # Tier 4: Enhanced fuzzy string matching with multiple algorithms
-        for dblp_norm in list(remaining_dblp):
+        # Tier 4: Fuzzy string matching for remaining authors
+        for dblp_item in dblp_data:
+            if dblp_item['matched']:
+                continue
+
             best_match = None
             best_score = 0
-            
-            for s2_norm in list(remaining_s2):
+
+            for s2_item in s2_data:
+                if s2_item['matched']:
+                    continue
+
                 # Use multiple fuzzy matching algorithms
-                token_sort_score = fuzz.token_sort_ratio(dblp_norm, s2_norm)
-                token_set_score = fuzz.token_set_ratio(dblp_norm, s2_norm)
-                partial_score = fuzz.partial_ratio(dblp_norm, s2_norm)
-                
-                # Take the maximum of different algorithms
+                token_sort_score = fuzz.token_sort_ratio(dblp_item['normalized'], s2_item['normalized'])
+                token_set_score = fuzz.token_set_ratio(dblp_item['normalized'], s2_item['normalized'])
+                partial_score = fuzz.partial_ratio(dblp_item['normalized'], s2_item['normalized'])
+
                 combined_score = max(token_sort_score, token_set_score, partial_score)
-                
-                # Lower threshold for better recall, but still high enough for precision
+
                 if combined_score > 85 and combined_score > best_score:
                     best_score = combined_score
-                    best_match = s2_norm
-            
+                    best_match = s2_item
+
             if best_match:
-                matched[dblp_normalized[dblp_norm]] = s2_normalized[best_match]
-                remaining_dblp.remove(dblp_norm)
-                remaining_s2.remove(best_match)
+                matched[dblp_item['original']] = best_match['original']
+                dblp_item['matched'] = True
+                best_match['matched'] = True
                 self.match_stats['fuzzy_matches'] += 1
-        
-        # Tier 5: Abbreviation and initial variants matching
-        for dblp_norm in list(remaining_dblp):
-            matched_variant = False  # Move this outside the inner loop
-            
-            for s2_norm in list(remaining_s2):
-                # Check if one is an abbreviation of the other
-                if self._is_abbreviation_match(dblp_norm, s2_norm):
-                    matched[dblp_normalized[dblp_norm]] = s2_normalized[s2_norm]
-                    remaining_dblp.remove(dblp_norm)
-                    remaining_s2.remove(s2_norm)
-                    self.match_stats['initialism_matches'] += 1
-                    matched_variant = True
-                    break
-            
-            if matched_variant:
-                break
-        
-        # Tier 6: Unique initial matching for single letters
-        for dblp_norm in list(remaining_dblp):
-            dblp_parts = dblp_norm.split()
-            if len(dblp_parts) == 1 and len(dblp_parts[0]) == 1:
-                initial = dblp_parts[0]
-                matching_s2 = []
-                
-                for s2_norm in remaining_s2:
-                    s2_parts = s2_norm.split()
-                    if s2_parts and s2_parts[0].startswith(initial):
-                        matching_s2.append(s2_norm)
-                
-                if len(matching_s2) == 1:
-                    matched[dblp_normalized[dblp_norm]] = s2_normalized[matching_s2[0]]
-                    remaining_dblp.remove(dblp_norm)
-                    remaining_s2.remove(matching_s2[0])
-                    self.match_stats['unique_initial_matches'] += 1
-        
-        # Tier 7: Positional fallback (last resort)
-        if len(remaining_dblp) == 1 and len(remaining_s2) == 1:
-            dblp_norm = list(remaining_dblp)[0]
-            s2_norm = list(remaining_s2)[0]
-            matched[dblp_normalized[dblp_norm]] = s2_normalized[s2_norm]
-            remaining_dblp.clear()
-            remaining_s2.clear()
-            self.match_stats['positional_matches'] += 1
-        
+
         # Count unmatched
-        self.match_stats['unmatched'] += len(remaining_dblp)
-        
+        unmatched_count = sum(1 for item in dblp_data if not item['matched'])
+        self.match_stats['unmatched'] += unmatched_count
+
         # Return unmatched DBLP authors
-        unmatched = [dblp_normalized[norm] for norm in remaining_dblp]
-        
+        unmatched = [item['original'] for item in dblp_data if not item['matched']]
+
         return matched, unmatched
     
     def _is_abbreviation_match(self, name1: str, name2: str) -> bool:
