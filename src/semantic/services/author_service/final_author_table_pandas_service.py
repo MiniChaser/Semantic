@@ -377,13 +377,11 @@ class FinalAuthorTablePandasService:
             s2_data = author_paper_data[author_paper_data['s2_author_id'].notna() & (author_paper_data['s2_author_id'] != '')]
             if not s2_data.empty:
                 s2_metrics = s2_data.groupby('s2_author_id').agg({
-                    'semantic_citation_count': 'sum',  # Total citations
                     'influentialcitationcount': 'sum',  # Total influential citations
                 }).reset_index()
 
                 s2_metrics.columns = [
                     's2_author_id',
-                    'semantic_scholar_citation_count',
                     'total_influential_citations'
                 ]
 
@@ -403,13 +401,11 @@ class FinalAuthorTablePandasService:
         ]
         if not dblp_data.empty:
             dblp_other_metrics = dblp_data.groupby('dblp_author_name').agg({
-                'semantic_citation_count': 'sum',  # Total citations
                 'influentialcitationcount': 'sum',  # Total influential citations
             }).reset_index()
 
             dblp_other_metrics.columns = [
                 'dblp_author_name',
-                'semantic_scholar_citation_count',
                 'total_influential_citations'
             ]
 
@@ -438,7 +434,6 @@ class FinalAuthorTablePandasService:
             # For authors without S2 metrics, use DBLP metrics
             mask_no_s2 = (final_df['s2_author_id'].isna()) | (final_df['s2_author_id'] == '')
 
-            final_df.loc[mask_no_s2, 'semantic_scholar_citation_count'] = final_df.loc[mask_no_s2, 'semantic_scholar_citation_count_dblp'].fillna(0)
             final_df.loc[mask_no_s2, 'total_influential_citations'] = final_df.loc[mask_no_s2, 'total_influential_citations_dblp'].fillna(0)
             final_df.loc[mask_no_s2, 'semantic_scholar_h_index'] = final_df.loc[mask_no_s2, 'semantic_scholar_h_index_dblp'].fillna(0)
 
@@ -450,7 +445,9 @@ class FinalAuthorTablePandasService:
 
         # Fill missing values for all authors
         final_df['semantic_scholar_paper_count'] = final_df['semantic_scholar_paper_count'].fillna(0)
-        final_df['semantic_scholar_citation_count'] = final_df['semantic_scholar_citation_count'].fillna(0)
+
+        # Use total_citations from author_profiles for semantic_scholar_citation_count
+        final_df['semantic_scholar_citation_count'] = final_df['total_citations'].fillna(0)
         final_df['total_influential_citations'] = final_df['total_influential_citations'].fillna(0)
         final_df['semantic_scholar_h_index'] = final_df['semantic_scholar_h_index'].fillna(0)
 
@@ -480,7 +477,8 @@ class FinalAuthorTablePandasService:
     def _add_default_metrics(self, final_df: pd.DataFrame) -> pd.DataFrame:
         """Add default metric values when no authorship/papers data is available"""
         final_df['semantic_scholar_paper_count'] = 0
-        final_df['semantic_scholar_citation_count'] = 0
+        # Use total_citations from author_profiles for semantic_scholar_citation_count
+        final_df['semantic_scholar_citation_count'] = final_df['total_citations'].fillna(0)
         final_df['total_influential_citations'] = 0
         final_df['semantic_scholar_h_index'] = 0
         return final_df
