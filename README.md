@@ -79,7 +79,7 @@ An automated data processing service that runs four scripts sequentially every 7
    ```bash
    # Set environment variables and run scheduler
    export SCHEDULE_INTERVAL_DAYS=7
-   python3 docker/scheduler.py
+   uv run python docker/scheduler.py
    ```
 
 ## ⚙️ Configuration
