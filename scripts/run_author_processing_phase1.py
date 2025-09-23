@@ -17,8 +17,9 @@ sys.path.insert(0, str(Path(__file__).parent.parent / 'src'))
 
 from semantic.utils.config import AppConfig
 from semantic.database.connection import get_db_manager
-from semantic.services.author_service.author_profile_service import AuthorProfileService
-from semantic.services.author_service.final_author_table_service import FinalAuthorTableService
+from semantic.services.author_service.author_profile_pandas_service import AuthorProfilePandasService
+from semantic.services.author_service.final_author_table_pandas_service import FinalAuthorTablePandasService
+from semantic.services.author_service.authorship_pandas_service import AuthorshipPandasService
 
 
 def convert_decimal_to_float(obj):
@@ -79,9 +80,10 @@ def main():
         logger.info("Database connection established")
         print("Database connection established")
         
-        # Initialize services
-        profile_service = AuthorProfileService(db_manager)
-        final_table_service = FinalAuthorTableService(db_manager)
+        # Initialize pandas services
+        profile_service = AuthorProfilePandasService(db_manager)
+        authorship_service = AuthorshipPandasService(db_manager)
+        final_table_service = FinalAuthorTablePandasService(db_manager)
         
         print("All services initialized")
         
@@ -89,12 +91,12 @@ def main():
         print("\n📋 Phase 1.1: Creating Authorships Table")
         print("-" * 40)
         
-        if not profile_service.create_authorships_table():
+        if not authorship_service.create_authorships_table():
             print("Failed to create authorships table")
             return 1
         print("Authorships table created")
-        
-        authorship_stats = profile_service.populate_authorships_table()
+
+        authorship_stats = authorship_service.populate_authorships_table_pandas()
         if 'error' in authorship_stats:
             print(f"❌ Failed to populate authorships table: {authorship_stats['error']}")
             return 1
@@ -137,7 +139,7 @@ def main():
             return 1
         print("✅ Final author table structure created")
         
-        final_stats = final_table_service.populate_final_author_table()
+        final_stats = final_table_service.populate_final_author_table_pandas()
         if 'error' in final_stats:
             print(f"❌ Failed to populate final table: {final_stats['error']}")
             return 1

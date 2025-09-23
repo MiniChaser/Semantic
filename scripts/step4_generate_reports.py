@@ -16,8 +16,8 @@ sys.path.insert(0, str(Path(__file__).parent.parent / 'src'))
 
 from semantic.utils.config import AppConfig
 from semantic.database.connection import get_db_manager
-from semantic.services.author_service.author_profile_service import AuthorProfileService
-from semantic.services.author_service.final_author_table_service import FinalAuthorTableService
+from semantic.services.author_service.author_profile_pandas_service import AuthorProfilePandasService
+from semantic.services.author_service.final_author_table_pandas_service import FinalAuthorTablePandasService
 
 
 def convert_decimal_to_float(obj):
@@ -63,18 +63,13 @@ def main():
         logger.info("✅ Database connection established")
         print("✅ Database connection established")
         
-        # Initialize services
-        profile_service = AuthorProfileService(db_manager)
-        final_table_service = FinalAuthorTableService(db_manager)
+        # Initialize pandas services
+        profile_service = AuthorProfilePandasService(db_manager)
+        final_table_service = FinalAuthorTablePandasService(db_manager)
         
         # Create reports directory
         reports_dir = Path("data/reports")
         reports_dir.mkdir(exist_ok=True)
-        
-        # Generate final table report
-        final_report_path = reports_dir / "final_author_table_report.json"
-        if final_table_service.generate_final_table_report(str(final_report_path)):
-            print(f"✅ Final table report: {final_report_path}")
         
         # Get comprehensive statistics
         processing_stats = profile_service.get_processing_statistics()
@@ -134,7 +129,6 @@ def main():
         
         # Display summary
         print(f"\n📁 Generated Reports:")
-        print(f"  📊 Final table report: {final_report_path}")
         print(f"  📈 Phase 1 comprehensive report: {phase1_report_path}")
         
         print("\n✅ All reports generated successfully!")

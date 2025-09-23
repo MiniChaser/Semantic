@@ -2,7 +2,7 @@
 """
 Author Processing - Run All Steps
 Executes all Phase 1 steps sequentially using pandas optimization for maximum performance.
-All compatible steps run with pandas mode for optimal database interaction and processing speed.
+All steps run with pandas mode for optimal database interaction and processing speed.
 """
 
 import sys
@@ -28,18 +28,9 @@ def run_step(step_script: str, step_name: str) -> tuple[bool, float]:
     start_time = time.time()
 
     try:
-        # Determine if this step supports pandas mode
-        pandas_compatible_steps = [
-            "step1_create_authorships.py",
-            "step2_create_author_profiles.py",
-            "step3_create_final_table.py"
-        ]
-
-        # Build command with pandas mode for compatible steps
+        # Always use pandas mode for maximum performance
         cmd = ["uv", "run", "python", step_script]
-        if any(step in step_script for step in pandas_compatible_steps):
-            cmd.extend(["--mode", "pandas"])
-            print("📊 Using pandas optimization mode for maximum performance")
+        print("📊 Using pandas optimization mode for maximum performance")
 
         # Run the step script
         result = subprocess.run(cmd, check=True, capture_output=False)
@@ -66,7 +57,7 @@ def main():
     print("🚀 Starting Complete Author Processing Phase 1 with Pandas Optimization")
     print("=" * 80)
     print(f"⏰ Started at: {overall_start_time.strftime('%Y-%m-%d %H:%M:%S')}")
-    print("🐼 All compatible steps will use pandas mode for maximum performance")
+    print("🐼 All steps use pandas mode for maximum performance")
     print()
 
     # Define all processing steps

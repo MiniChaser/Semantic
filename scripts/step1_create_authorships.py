@@ -3,9 +3,7 @@
 Author Processing Step 1: Create Authorships Table
 Creates and populates the authorships table with paper-author relationships
 
-Now supports both regular and pandas-optimized processing modes:
-- Regular mode: Compatible with original implementation (limited coverage)
-- Pandas mode: Optimized for performance and COMPLETE data coverage
+Uses pandas-optimized processing mode for performance and COMPLETE data coverage
 """
 
 import sys
@@ -20,7 +18,6 @@ sys.path.insert(0, str(Path(__file__).parent.parent / 'src'))
 
 from semantic.utils.config import AppConfig
 from semantic.database.connection import get_db_manager
-from semantic.services.author_service.author_profile_service import AuthorProfileService
 from semantic.services.author_service.authorship_pandas_service import AuthorshipPandasService
 
 
@@ -42,24 +39,15 @@ def setup_logging():
 def parse_arguments():
     """Parse command line arguments"""
     parser = argparse.ArgumentParser(
-        description="Create Authorships Table (Step 1)",
+        description="Create Authorships Table (Step 1) - Pandas Mode Only",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
-Processing modes:
-  regular: Uses original implementation with pagination (limited coverage ~10%)
-  pandas:  Uses optimized pandas-based batch processing with FULL coverage (recommended)
+Uses optimized pandas-based batch processing with FULL coverage.
 
 Examples:
-  python step1_create_authorships.py --mode pandas
-  python step1_create_authorships.py --mode regular --verbose
+  python step1_create_authorships.py
+  python step1_create_authorships.py --verbose
         """
-    )
-
-    parser.add_argument(
-        '--mode',
-        choices=['regular', 'pandas'],
-        default='pandas',
-        help='Processing mode (default: pandas)'
     )
 
     parser.add_argument(
@@ -71,21 +59,6 @@ Examples:
     return parser.parse_args()
 
 
-def run_regular_mode(db_manager) -> Dict:
-    """Run using original AuthorProfileService (limited coverage)"""
-    print("Using regular processing mode (limited coverage)...")
-
-    # Initialize service
-    profile_service = AuthorProfileService(db_manager)
-
-    # Create authorships table
-    if not profile_service.create_authorships_table():
-        return {'error': 'Failed to create authorships table'}
-    print("Authorships table created")
-
-    # Populate authorships table
-    authorship_stats = profile_service.populate_authorships_table()
-    return authorship_stats
 
 
 def run_pandas_mode(db_manager) -> Dict:
@@ -110,13 +83,9 @@ def main():
 
     args = parse_arguments()
 
-    print("Step 1: Creating Authorships Table")
+    print("Step 1: Creating Authorships Table - Pandas Mode")
     print("=" * 50)
-    print(f"Processing mode: {args.mode.upper()}")
-    if args.mode == 'pandas':
-        print("Note: Pandas mode provides COMPLETE data coverage (all papers)")
-    else:
-        print("Note: Regular mode has limited coverage (~10% of papers)")
+    print("Using pandas-optimized processing with COMPLETE data coverage")
     print("=" * 50)
 
     try:
@@ -137,11 +106,8 @@ def main():
         # Record processing start time
         start_time = time.time()
 
-        # Run appropriate processing mode
-        if args.mode == 'pandas':
-            authorship_stats = run_pandas_mode(db_manager)
-        else:
-            authorship_stats = run_regular_mode(db_manager)
+        # Run pandas processing mode
+        authorship_stats = run_pandas_mode(db_manager)
 
         # Calculate processing time
         end_time = time.time()

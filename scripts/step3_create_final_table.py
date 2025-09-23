@@ -3,9 +3,7 @@
 Author Processing Step 3: Create Final Author Table
 Creates and populates the final target table with all computed metrics
 
-Now supports both regular and pandas-optimized processing modes:
-- Regular mode: Compatible with original implementation (multiple queries)
-- Pandas mode: Optimized for performance using batch processing (recommended)
+Uses pandas-optimized processing mode for performance using batch processing
 """
 
 import sys
@@ -20,7 +18,6 @@ sys.path.insert(0, str(Path(__file__).parent.parent / 'src'))
 
 from semantic.utils.config import AppConfig
 from semantic.database.connection import get_db_manager
-from semantic.services.author_service.final_author_table_service import FinalAuthorTableService
 from semantic.services.author_service.final_author_table_pandas_service import FinalAuthorTablePandasService
 
 
@@ -42,24 +39,15 @@ def setup_logging():
 def parse_arguments():
     """Parse command line arguments"""
     parser = argparse.ArgumentParser(
-        description="Create Final Author Table (Step 3)",
+        description="Create Final Author Table (Step 3) - Pandas Mode Only",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
-Processing modes:
-  regular: Uses original implementation with individual queries (slower)
-  pandas:  Uses optimized pandas-based batch processing (recommended)
+Uses optimized pandas-based batch processing.
 
 Examples:
-  python step3_create_final_table.py --mode pandas
-  python step3_create_final_table.py --mode regular --verbose
+  python step3_create_final_table.py
+  python step3_create_final_table.py --verbose
         """
-    )
-
-    parser.add_argument(
-        '--mode',
-        choices=['regular', 'pandas'],
-        default='pandas',
-        help='Processing mode (default: pandas)'
     )
 
     parser.add_argument(
@@ -71,21 +59,6 @@ Examples:
     return parser.parse_args()
 
 
-def run_regular_mode(db_manager) -> Dict:
-    """Run using original FinalAuthorTableService"""
-    print("Using regular processing mode (individual queries)...")
-
-    # Initialize service
-    final_table_service = FinalAuthorTableService(db_manager)
-
-    # Create final author table
-    if not final_table_service.create_final_author_table():
-        return {'error': 'Failed to create final author table'}
-    print("Final author table created")
-
-    # Populate final author table
-    final_stats = final_table_service.populate_final_author_table()
-    return final_stats
 
 
 def run_pandas_mode(db_manager) -> Dict:
@@ -110,13 +83,9 @@ def main():
 
     args = parse_arguments()
 
-    print("Step 3: Creating Final Target Table")
+    print("Step 3: Creating Final Target Table - Pandas Mode")
     print("=" * 50)
-    print(f"Processing mode: {args.mode.upper()}")
-    if args.mode == 'pandas':
-        print("Note: Pandas mode provides optimized batch processing with minimal database queries")
-    else:
-        print("Note: Regular mode uses individual queries (slower but compatible)")
+    print("Using pandas-optimized batch processing with minimal database queries")
     print("=" * 50)
 
     try:
@@ -137,11 +106,8 @@ def main():
         # Record processing start time
         start_time = time.time()
 
-        # Run appropriate processing mode
-        if args.mode == 'pandas':
-            final_stats = run_pandas_mode(db_manager)
-        else:
-            final_stats = run_regular_mode(db_manager)
+        # Run pandas processing mode
+        final_stats = run_pandas_mode(db_manager)
 
         # Calculate processing time
         end_time = time.time()
@@ -170,10 +136,7 @@ def main():
 
         # Show sample records
         print(f"\nSample Final Table Records:")
-        if args.mode == 'pandas':
-            service = FinalAuthorTablePandasService(db_manager)
-        else:
-            service = FinalAuthorTableService(db_manager)
+        service = FinalAuthorTablePandasService(db_manager)
 
         sample_records = service.get_sample_records(5)
         for i, record in enumerate(sample_records, 1):

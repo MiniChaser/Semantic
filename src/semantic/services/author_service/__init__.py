@@ -3,12 +3,14 @@ Author service subpackage
 Contains all author-related services including profile management and final table generation
 """
 
-from .author_profile_service import AuthorProfileService
-from .final_author_table_service import FinalAuthorTableService
+from .author_profile_pandas_service import AuthorProfilePandasService
+from .authorship_pandas_service import AuthorshipPandasService
+from .final_author_table_pandas_service import FinalAuthorTablePandasService
 from .author_disambiguation_service import AuthorMatcher
 
 __all__ = [
-    'AuthorProfileService',
-    'FinalAuthorTableService',
+    'AuthorProfilePandasService',
+    'AuthorshipPandasService',
+    'FinalAuthorTablePandasService',
     'AuthorMatcher'
 ]
