@@ -1,10 +1,9 @@
 """
 Comprehensive Pipeline Service
-Orchestrates the complete data processing pipeline including all 4 phases:
+Orchestrates the complete data processing pipeline including 3 phases:
 1. DBLP data pipeline
-2. Semantic Scholar enrichment 
+2. Semantic Scholar enrichment
 3. Author processing
-4. PDF download
 """
 
 import os
@@ -43,12 +42,6 @@ class ComprehensivePipelineService:
                 'name': 'Author Processing Phase 1',
                 'script_path': 'scripts/run_author_processing_phase1.py',
                 'description': 'Process author profiles and metrics',
-                'timeout': 1800  # 30 minutes timeout
-            },
-            {
-                'name': 'PDF Download',
-                'script_path': 'scripts/run_pdf_download.py',
-                'description': 'Download available PDFs',
                 'timeout': 1800  # 30 minutes timeout
             }
         ]

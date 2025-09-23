@@ -171,7 +171,6 @@ async def main():
             print("\n📊 FINAL SUMMARY:")
             print("=" * 50)
             print("✅ S2 enrichment process completed successfully!")
-            print("💡 To download PDFs, run: uv run python scripts/run_pdf_download.py")
             
         else:
             print("❌ S2 enrichment failed!")
