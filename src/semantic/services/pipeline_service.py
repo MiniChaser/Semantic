@@ -88,25 +88,21 @@ class DataPipelineService:
             return []
 
     def step3_load_papers(self, papers: List[DBLP_Paper]) -> bool:
-        """Step 3: Load papers to database"""
+        """Step 3: Load papers to database using UPSERT (preserves enriched_papers data)"""
         try:
             if not papers:
                 self.logger.info("No papers to load")
                 return True
 
             self.logger.info(f"[{datetime.now()}] Executing Step 3: Loading {len(papers)} papers to database")
+            self.logger.info("Using UPSERT mode to preserve existing enriched_papers data")
 
             # Ensure database tables exist
             if not self.paper_repo.create_tables():
                 raise Exception("Database table creation failed")
 
-            # Clear table for complete overwrite
-            self.logger.info("Clearing existing data...")
-            if not self._truncate_papers_table():
-                raise Exception("Failed to clear papers table")
-            self.logger.info("Papers table cleared successfully")
-
-            # Batch insert papers
+            # Use UPSERT to insert/update papers (preserves enriched_papers data)
+            self.logger.info("Starting UPSERT operation...")
             inserted, updated, errors = self.paper_repo.batch_insert_papers(papers)
 
             # Update statistics
@@ -123,14 +119,6 @@ class DataPipelineService:
             self.logger.error(f"Step 3 failed: {e}")
             return False
 
-    def _truncate_papers_table(self) -> bool:
-        """Truncate papers table for complete overwrite"""
-        try:
-            sql = "TRUNCATE TABLE dblp_papers RESTART IDENTITY CASCADE"
-            return self.db_manager.execute_query(sql)
-        except Exception as e:
-            self.logger.error(f"Failed to truncate papers table: {e}")
-            return False
 
     def step4_post_process(self) -> bool:
         """Step 4: Post processing (cleanup files, record metadata, etc.)"""
@@ -164,7 +152,7 @@ class DataPipelineService:
         """Run the entire data pipeline"""
         self.start_time = datetime.now()
         self.logger.info(f"\n[{self.start_time}] Starting data pipeline execution")
-        self.logger.info("Processing mode: Complete Overwrite")
+        self.logger.info("Processing mode: UPSERT (preserves enriched_papers data)")
 
         try:
             # Reset statistics

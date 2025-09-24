@@ -81,7 +81,7 @@ async def main():
         
         # Process papers individually (each paper is saved immediately)
         print("\n🔄 Starting individual paper enrichment process...")
-        success = s2_service.enrich_papers(limit=38000)
+        success = s2_service.enrich_papers(limit=100000)
         
         if success:
             # Calculate timing statistics
