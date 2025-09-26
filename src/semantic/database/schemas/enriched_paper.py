@@ -189,7 +189,6 @@ class EnrichedPaperSchema:
             records_processed INTEGER DEFAULT 0,
             records_inserted INTEGER DEFAULT 0,
             records_updated INTEGER DEFAULT 0,
-            records_tier1 INTEGER DEFAULT 0,
             records_tier2 INTEGER DEFAULT 0,
             records_tier3 INTEGER DEFAULT 0,
             api_calls_made INTEGER DEFAULT 0,

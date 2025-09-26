@@ -152,14 +152,13 @@ pdf_file_path             TEXT,           -- Full path to PDF file
 #### Validation & Quality (5 fields)
 ```sql
 match_method              VARCHAR(100),   -- How paper was matched with S2
-validation_tier           VARCHAR(50),    -- Tier1_IDMatch, Tier2_SimilarityMatch, etc.
+validation_tier           VARCHAR(50),    -- Tier2_SimilarityMatch, Tier3_FuzzyMatch, etc.
 match_confidence          DECIMAL(5,3),   -- Confidence score (0.000-99.999)
 data_source_primary       VARCHAR(50),    -- Primary data source
 data_completeness_score   DECIMAL(5,3),   -- Completeness score
 ```
 
 **Matching Tiers**:
-- **Tier1_IDMatch**: Exact match by DOI or ACL ID
 - **Tier2_SimilarityMatch**: Title and author similarity matching
 - **Tier3_FuzzyMatch**: Fuzzy matching with confidence scoring
 
@@ -183,7 +182,6 @@ CREATE TABLE s2_processing_meta (
     records_processed   INTEGER DEFAULT 0,              -- Papers processed this run
     records_inserted    INTEGER DEFAULT 0,              -- New papers added
     records_updated     INTEGER DEFAULT 0,              -- Papers updated
-    records_tier1       INTEGER DEFAULT 0,              -- Tier1 matches
     records_tier2       INTEGER DEFAULT 0,              -- Tier2 matches
     records_tier3       INTEGER DEFAULT 0,              -- Tier3 matches
     api_calls_made      INTEGER DEFAULT 0,              -- S2 API calls made

@@ -273,24 +273,23 @@ class EnrichedPaperRepository:
     
     def record_s2_processing_meta(self, process_type: str, status: str,
                                 records_processed: int = 0, records_inserted: int = 0,
-                                records_updated: int = 0, records_tier1: int = 0,
-                                records_tier2: int = 0, records_tier3: int = 0,
-                                api_calls_made: int = 0, error_message: str = None,
-                                execution_duration: int = None) -> bool:
+                                records_updated: int = 0, records_tier2: int = 0,
+                                records_tier3: int = 0, api_calls_made: int = 0,
+                                error_message: str = None, execution_duration: int = None) -> bool:
         """Record S2 processing metadata"""
         try:
             sql = """
-            INSERT INTO s2_processing_meta 
-            (process_type, last_run_time, status, records_processed, 
-             records_inserted, records_updated, records_tier1, records_tier2,
-             records_tier3, api_calls_made, error_message, execution_duration)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            INSERT INTO s2_processing_meta
+            (process_type, last_run_time, status, records_processed,
+             records_inserted, records_updated, records_tier2, records_tier3,
+             api_calls_made, error_message, execution_duration)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """
-            
+
             params = (
                 process_type, datetime.now(), status, records_processed,
-                records_inserted, records_updated, records_tier1, records_tier2,
-                records_tier3, api_calls_made, error_message, execution_duration
+                records_inserted, records_updated, records_tier2, records_tier3,
+                api_calls_made, error_message, execution_duration
             )
             
             return self.db.execute_query(sql, params)
