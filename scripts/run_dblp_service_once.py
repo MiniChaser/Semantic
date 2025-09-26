@@ -64,8 +64,8 @@ def main():
         try:
             db_manager = get_db_manager()
             db_manager.disconnect()
-        except:
-            pass
+        except Exception as e:
+            print(f"Warning: Failed to disconnect database: {e}")
 
 if __name__ == "__main__":
     sys.exit(0 if main() else 1)
