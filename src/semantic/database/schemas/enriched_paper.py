@@ -37,7 +37,7 @@ class EnrichedPaperSchema:
             id SERIAL PRIMARY KEY,
             
             -- Reference to DBLP paper
-            dblp_paper_id INTEGER REFERENCES dblp_papers(id),
+            dblp_paper_id INTEGER,
             
             -- DBLP fields (12 fields)
             dblp_id INTEGER,

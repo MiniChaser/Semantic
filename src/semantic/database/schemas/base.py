@@ -9,6 +9,7 @@ from ..connection import DatabaseManager
 from .paper import PaperSchema
 from .processing import ProcessingMetaSchema
 from .scheduler import SchedulerSchema
+from .enriched_paper import EnrichedPaperSchema
 
 
 class DatabaseSchema:
@@ -22,6 +23,7 @@ class DatabaseSchema:
         self.paper_schema = PaperSchema(db_manager)
         self.processing_schema = ProcessingMetaSchema(db_manager)
         self.scheduler_schema = SchedulerSchema(db_manager)
+        self.enriched_paper_schema = EnrichedPaperSchema(db_manager)
     
     def _setup_logger(self) -> logging.Logger:
         """Setup logging for schema management"""
@@ -46,11 +48,15 @@ class DatabaseSchema:
             # Create dblp_papers table
             if not self.paper_schema.create_table():
                 raise Exception("Failed to create dblp_papers table")
-            
+
+            # Create enriched papers table (without foreign key constraint)
+            if not self.enriched_paper_schema.create_table():
+                raise Exception("Failed to create enriched_papers table")
+
             # Create processing metadata table
             if not self.processing_schema.create_table():
                 raise Exception("Failed to create processing metadata table")
-            
+
             # Create scheduler jobs table
             if not self.scheduler_schema.create_table():
                 raise Exception("Failed to create scheduler jobs table")
@@ -69,7 +75,9 @@ class DatabaseSchema:
             
             tables = [
                 'scheduler_jobs',
-                'dblp_processing_meta', 
+                's2_processing_meta',
+                'enriched_papers',
+                'dblp_processing_meta',
                 'dblp_papers'
             ]
             
