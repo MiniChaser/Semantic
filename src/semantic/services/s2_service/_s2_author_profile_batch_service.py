@@ -257,7 +257,7 @@ class S2AuthorProfileBatchService:
             params = []
             if author_ids:
                 placeholders = ','.join(['%s'] * len(author_ids))
-                where_clause = f"WHERE sap.s2_author_id IN ({placeholders})"
+                where_clause = f"AND sap.s2_author_id IN ({placeholders})"
                 params = author_ids
 
             # Update author_profiles with data from s2_author_profiles
