@@ -17,7 +17,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent / 'src'))
 
 from semantic.utils.config import AppConfig
-from semantic.services.s2_service.s2_enrichment_service import S2EnrichmentService
+from semantic.services.s2_service.s2_paper_enrichment_service import S2EnrichmentService
 from semantic.database.connection import get_db_manager
 
 
