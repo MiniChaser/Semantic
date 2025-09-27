@@ -7,11 +7,9 @@ No API calls - uses cached data only
 
 import logging
 import time
-import threading
-import os
 from datetime import datetime
 from typing import Dict
-from concurrent.futures import ThreadPoolExecutor, as_completed
+import pandas as pd
 
 from ...database.connection import DatabaseManager
 
@@ -23,42 +21,14 @@ class S2AuthorProfileSyncService:
     This service reads cached S2 data and updates author_profiles without API calls
     """
 
-    def __init__(self, db_manager: DatabaseManager, max_workers: int = None):
+    def __init__(self, db_manager: DatabaseManager):
         self.db_manager = db_manager
         self.logger = logging.getLogger(__name__)
-        self._stats_lock = threading.Lock()
-        self._max_workers = max_workers
 
-    def _calculate_optimal_workers(self) -> int:
-        """Calculate optimal number of worker threads based on system and database configuration"""
-        if self._max_workers is not None:
-            return self._max_workers
-
-        # Get database pool configuration
-        db_pool_size = getattr(self.db_manager.config, 'pool_size', 10)
-        db_max_overflow = getattr(self.db_manager.config, 'max_overflow', 20)
-        total_db_connections = db_pool_size + db_max_overflow
-
-        # Get CPU count
-        cpu_count = os.cpu_count() or 4
-
-        # Calculate optimal workers based on testing results
-        # Testing shows 6-8 workers perform best for database I/O operations
-        optimal_workers = min(
-            12,  # Maximum cap - testing shows diminishing returns after 8
-            max(6, db_pool_size // 2),  # More aggressive: use 1/2 of base pool size
-            cpu_count * 2,  # For I/O bound tasks, can use more than CPU count
-            total_db_connections // 3  # Less conservative connection usage
-        )
-
-        self.logger.info(f"Calculated optimal workers: {optimal_workers} "
-                        f"(DB pool: {db_pool_size}, CPU: {cpu_count})")
-
-        return optimal_workers
 
     def sync_author_profiles(self, limit: int = None) -> Dict:
         """
-        Sync S2 author data from s2_author_profiles to author_profiles table
+        Sync S2 author data from s2_author_profiles to author_profiles table using bulk DataFrame operations
 
         Args:
             limit: Maximum number of authors to process
@@ -67,38 +37,16 @@ class S2AuthorProfileSyncService:
             Sync statistics
         """
         start_time = time.time()
-        self.logger.info("Starting S2 author profile sync from cached data...")
+        self.logger.info("Starting S2 author profile sync using bulk DataFrame operations...")
 
         try:
-            # Get authors that need S2 enrichment (without JOIN to handle comma-separated IDs)
-            query = """
-                SELECT
-                    ap.id,
-                    ap.s2_author_id,
-                    ap.dblp_author_name,
-                    -- Current values in author_profiles (targets)
-                    ap.homepage as current_homepage,
-                    ap.s2_affiliations as current_s2_affiliations,
-                    ap.s2_paper_count as current_s2_paper_count,
-                    ap.s2_citation_count as current_s2_citation_count,
-                    ap.s2_h_index as current_s2_h_index
-                FROM author_profiles ap
-                WHERE ap.s2_author_id IS NOT NULL
-                  AND ap.s2_author_id != ''
-                  AND (ap.homepage IS NULL
-                       OR ap.s2_affiliations IS NULL
-                       OR ap.s2_paper_count IS NULL
-                       OR ap.s2_citation_count IS NULL
-                       OR ap.s2_h_index IS NULL)
-            """
+            # Load all author profiles into DataFrame
+            self.logger.info("Loading author_profiles table into memory...")
+            author_profiles_query = "SELECT * FROM author_profiles"
 
-            if limit:
-                query += f" LIMIT {limit}"
-
-            authors_to_sync = self.db_manager.fetch_all(query)
-
-            if not authors_to_sync:
-                self.logger.info("No authors need S2 data sync from cached data")
+            author_profiles_data = self.db_manager.fetch_all(author_profiles_query)
+            if not author_profiles_data:
+                self.logger.info("No author profiles found")
                 return {
                     'total_authors_processed': 0,
                     'authors_synced': 0,
@@ -106,251 +54,194 @@ class S2AuthorProfileSyncService:
                     'processing_time': time.time() - start_time
                 }
 
-            self.logger.info(f"Found {len(authors_to_sync)} authors to sync from cached S2 data")
+            author_profiles_df = pd.DataFrame(author_profiles_data)
+            self.logger.info(f"Loaded {len(author_profiles_df)} author profiles")
 
-            # Statistics tracking
-            stats = {
-                'total_authors_processed': 0,
-                'authors_synced': 0,
-                'errors': 0,
-                'total_authors': len(authors_to_sync)
-            }
-
-            # Process authors using ThreadPoolExecutor with optimal worker count
-            optimal_workers = self._calculate_optimal_workers()
-            with ThreadPoolExecutor(max_workers=optimal_workers) as executor:
-                # Submit all tasks
-                future_to_author = {
-                    executor.submit(self._sync_single_author, author_record): author_record
-                    for author_record in authors_to_sync
+            # Load all S2 author profiles into DataFrame
+            self.logger.info("Loading s2_author_profiles table into memory...")
+            s2_profiles_data = self.db_manager.fetch_all("SELECT * FROM s2_author_profiles")
+            if not s2_profiles_data:
+                self.logger.info("No S2 profiles found for enrichment")
+                return {
+                    'total_authors_processed': 0,
+                    'authors_synced': 0,
+                    'errors': 0,
+                    'processing_time': time.time() - start_time
                 }
 
-                # Process completed tasks
-                for future in as_completed(future_to_author):
-                    author_record = future_to_author[future]
-                    try:
-                        sync_result = future.result()
-                        self._update_stats_thread_safe(stats, sync_result, author_record['dblp_author_name'])
-                    except Exception as e:
-                        self.logger.error(f"Error processing author {author_record['dblp_author_name']}: {e}")
-                        with self._stats_lock:
-                            stats['errors'] += 1
+            s2_profiles_df = pd.DataFrame(s2_profiles_data)
+            self.logger.info(f"Loaded {len(s2_profiles_df)} S2 profiles")
 
-            # Calculate processing time
+            # Process data enrichment in memory
+            authors_synced = self._enrich_author_profiles_bulk(author_profiles_df, s2_profiles_df)
+
+            # Write the enriched data back to database (overwrite entire table)
+            self.logger.info("Writing enriched author profiles back to database...")
+            # Ensure correct column order and data types for database compatibility
+            author_profiles_df['updated_at'] = pd.Timestamp.now()
+
+            # Use pandas to_sql to replace the entire table
+            from sqlalchemy import create_engine
+            engine = create_engine(self.db_manager.config.get_connection_string())
+            author_profiles_df.to_sql('author_profiles', engine, if_exists='replace', index=False, method='multi')
+
             processing_time = time.time() - start_time
-            stats['processing_time'] = processing_time
 
-            self.logger.info(f"S2 author profile sync completed. Synced {stats['authors_synced']} authors in {processing_time:.2f} seconds.")
-            return stats
+            self.logger.info(f"S2 author profile bulk sync completed. Enriched {authors_synced} authors in {processing_time:.2f} seconds.")
+
+            return {
+                'total_authors_processed': len(author_profiles_df),
+                'authors_synced': authors_synced,
+                'errors': 0,
+                'processing_time': processing_time
+            }
 
         except Exception as e:
-            self.logger.error(f"S2 author profile sync failed: {e}")
+            self.logger.error(f"S2 author profile bulk sync failed: {e}")
             return {
                 'error': str(e),
                 'processing_time': time.time() - start_time
             }
 
-    def _fetch_and_aggregate_s2_data(self, s2_author_ids: list) -> Dict:
+    def _enrich_author_profiles_bulk(self, author_profiles_df: pd.DataFrame, s2_profiles_df: pd.DataFrame) -> int:
         """
-        Fetch and aggregate S2 data from multiple s2_author_profiles records
+        Enrich author profiles with S2 data using DataFrame operations
 
         Args:
-            s2_author_ids: List of s2 author IDs
+            author_profiles_df: DataFrame containing all author profiles
+            s2_profiles_df: DataFrame containing all S2 profiles
 
         Returns:
-            Aggregated S2 data dictionary
+            Number of authors that were enriched
         """
-        if not s2_author_ids:
-            return {}
+        self.logger.info("Processing author profile enrichment in memory...")
 
-        # Remove duplicates and empty values
-        unique_ids = list(set([str(id_).strip() for id_ in s2_author_ids if id_ and str(id_).strip()]))
+        authors_synced = 0
 
-        if not unique_ids:
-            return {}
+        # Filter authors that need S2 enrichment and have S2 IDs
+        mask = (
+            author_profiles_df['s2_author_id'].notna() &
+            (author_profiles_df['s2_author_id'] != '') &
+            (
+                author_profiles_df['homepage'].isna() |
+                author_profiles_df['s2_affiliations'].isna() |
+                author_profiles_df['s2_paper_count'].isna() |
+                author_profiles_df['s2_citation_count'].isna() |
+                author_profiles_df['s2_h_index'].isna()
+            )
+        )
 
-        try:
-            # Build IN clause for multiple IDs
-            placeholders = ','.join(['%s'] * len(unique_ids))
-            query = f"""
-                SELECT
-                    s2_author_id,
-                    name,
-                    url,
-                    affiliations,
-                    paper_count,
-                    citation_count,
-                    h_index,
-                    updated_at
-                FROM s2_author_profiles
-                WHERE s2_author_id IN ({placeholders})
-                ORDER BY updated_at DESC
-            """
+        authors_to_enrich = author_profiles_df[mask].copy()
 
-            s2_profiles = self.db_manager.fetch_all(query, unique_ids)
+        if authors_to_enrich.empty:
+            self.logger.info("No authors need S2 enrichment")
+            return 0
 
-            if not s2_profiles:
-                return {}
+        self.logger.info(f"Found {len(authors_to_enrich)} authors that need S2 enrichment")
 
-            # Aggregate the data
-            aggregated = {
-                'names': [],
-                'urls': [],
-                'affiliations_list': [],
-                'paper_counts': [],
-                'citation_counts': [],
-                'h_indices': [],
-                'latest_update': None
-            }
+        # Process each author that needs enrichment
+        for idx, author_row in authors_to_enrich.iterrows():
+            try:
+                # Handle comma-separated S2 author IDs
+                s2_author_id_str = str(author_row['s2_author_id']).strip()
+                s2_author_ids = [id_.strip() for id_ in s2_author_id_str.split(',') if id_.strip()]
 
-            for profile in s2_profiles:
-                # Collect names
-                if profile['name']:
-                    aggregated['names'].append(str(profile['name']))
+                if not s2_author_ids:
+                    continue
 
-                # Collect URLs (first non-empty one will be used)
-                if profile['url'] and not aggregated['urls']:
-                    aggregated['urls'].append(str(profile['url']))
+                # Get matching S2 profiles for this author
+                matching_s2_profiles = s2_profiles_df[s2_profiles_df['s2_author_id'].isin(s2_author_ids)]
 
-                # Collect affiliations
-                if profile['affiliations']:
-                    if isinstance(profile['affiliations'], list):
-                        for aff in profile['affiliations']:
-                            if aff:
-                                aggregated['affiliations_list'].append(str(aff))
-                    else:
-                        aggregated['affiliations_list'].append(str(profile['affiliations']))
+                if matching_s2_profiles.empty:
+                    continue
 
-                # Collect numeric values
-                if profile['paper_count'] is not None:
-                    aggregated['paper_counts'].append(int(profile['paper_count']))
+                # Aggregate S2 data from multiple profiles
+                aggregated_data = self._aggregate_s2_data(matching_s2_profiles)
 
-                if profile['citation_count'] is not None:
-                    aggregated['citation_counts'].append(int(profile['citation_count']))
+                # Apply enrichment only to empty fields
+                updated = False
 
-                if profile['h_index'] is not None:
-                    aggregated['h_indices'].append(int(profile['h_index']))
+                if (pd.isna(author_row['homepage']) or author_row['homepage'] is None) and aggregated_data.get('homepage'):
+                    author_profiles_df.at[idx, 'homepage'] = aggregated_data['homepage']
+                    updated = True
 
-                # Track latest update
-                if profile['updated_at']:
-                    if not aggregated['latest_update'] or profile['updated_at'] > aggregated['latest_update']:
-                        aggregated['latest_update'] = profile['updated_at']
+                if (pd.isna(author_row['s2_affiliations']) or author_row['s2_affiliations'] is None) and aggregated_data.get('affiliations'):
+                    author_profiles_df.at[idx, 's2_affiliations'] = aggregated_data['affiliations']
+                    updated = True
 
-            # Return final aggregated values
-            return {
-                's2_name': ','.join(aggregated['names']) if aggregated['names'] else None,
-                's2_homepage': aggregated['urls'][0] if aggregated['urls'] else None,
-                's2_affiliations': list(set(aggregated['affiliations_list'])) if aggregated['affiliations_list'] else None,
-                's2_paper_count': sum(aggregated['paper_counts']) if aggregated['paper_counts'] else None,
-                's2_citation_count': sum(aggregated['citation_counts']) if aggregated['citation_counts'] else None,
-                's2_h_index': max(aggregated['h_indices']) if aggregated['h_indices'] else None,
-                's2_data_updated': aggregated['latest_update']
-            }
+                if (pd.isna(author_row['s2_paper_count']) or author_row['s2_paper_count'] is None) and aggregated_data.get('paper_count') is not None:
+                    author_profiles_df.at[idx, 's2_paper_count'] = aggregated_data['paper_count']
+                    updated = True
 
-        except Exception as e:
-            self.logger.error(f"Error fetching/aggregating S2 data for IDs {unique_ids}: {e}")
-            return {}
+                if (pd.isna(author_row['s2_citation_count']) or author_row['s2_citation_count'] is None) and aggregated_data.get('citation_count') is not None:
+                    author_profiles_df.at[idx, 's2_citation_count'] = aggregated_data['citation_count']
+                    updated = True
 
-    def _sync_single_author(self, author_record: Dict) -> bool:
+                if (pd.isna(author_row['s2_h_index']) or author_row['s2_h_index'] is None) and aggregated_data.get('h_index') is not None:
+                    author_profiles_df.at[idx, 's2_h_index'] = aggregated_data['h_index']
+                    updated = True
+
+                if updated:
+                    authors_synced += 1
+
+            except Exception as e:
+                self.logger.error(f"Error enriching author {author_row.get('dblp_author_name', 'unknown')}: {e}")
+
+        self.logger.info(f"Successfully enriched {authors_synced} authors")
+        return authors_synced
+
+    def _aggregate_s2_data(self, s2_profiles: pd.DataFrame) -> Dict:
         """
-        Sync a single author record with cached S2 data (supports comma-separated s2_author_ids)
+        Aggregate S2 data from multiple profiles for the same author
 
         Args:
-            author_record: Author data from query
+            s2_profiles: DataFrame containing S2 profiles for one author
 
         Returns:
-            True if successful, False otherwise
+            Dictionary with aggregated S2 data
         """
-        try:
-            # Split comma-separated s2_author_ids and fetch aggregated S2 data
-            s2_author_id_str = str(author_record['s2_author_id']).strip()
-            s2_author_ids = [id_.strip() for id_ in s2_author_id_str.split(',') if id_.strip()]
+        if s2_profiles.empty:
+            return {}
 
-            if not s2_author_ids:
-                self.logger.debug(f"No valid S2 author IDs for {author_record['dblp_author_name']}")
-                return False
+        # Sort by updated_at to get most recent data first
+        s2_profiles = s2_profiles.sort_values('updated_at', ascending=False)
 
-            # Fetch and aggregate S2 data from multiple profiles
-            s2_data = self._fetch_and_aggregate_s2_data(s2_author_ids)
+        # Get the first non-null homepage URL
+        homepage = None
+        for url in s2_profiles['url'].dropna():
+            if url:
+                homepage = str(url)
+                break
 
-            if not s2_data:
-                self.logger.debug(f"No S2 data found for IDs {s2_author_ids} for author {author_record['dblp_author_name']}")
-                return False
-
-            # Build update data using aggregated S2 data
-            update_data = {}
-            updates_made = []  # Track what we're updating for logging
-
-            # Homepage URL - use S2 data if author_profiles field is empty
-            if s2_data.get('s2_homepage') and not author_record['current_homepage']:
-                update_data['homepage'] = s2_data['s2_homepage']
-                updates_made.append(f"homepage: '{s2_data['s2_homepage']}'")
-
-            # Affiliations (convert list to comma-separated string)
-            if s2_data.get('s2_affiliations') and not author_record['current_s2_affiliations']:
-                try:
-                    if isinstance(s2_data['s2_affiliations'], list):
-                        affiliations_str = ','.join([str(aff) for aff in s2_data['s2_affiliations'] if aff])
-                    else:
-                        affiliations_str = str(s2_data['s2_affiliations'])
-
-                    if affiliations_str:
-                        update_data['s2_affiliations'] = affiliations_str
-                        updates_made.append(f"s2_affiliations: '{affiliations_str[:50]}{'...' if len(affiliations_str) > 50 else ''}'")
-                except Exception as e:
-                    self.logger.warning(f"Error processing affiliations for {author_record['dblp_author_name']}: {e}")
-
-            # Paper count - use aggregated S2 data if author_profiles field is empty
-            if s2_data.get('s2_paper_count') is not None and author_record['current_s2_paper_count'] is None:
-                update_data['s2_paper_count'] = s2_data['s2_paper_count']
-                updates_made.append(f"s2_paper_count: {s2_data['s2_paper_count']}")
-
-            # Citation count - use aggregated S2 data if author_profiles field is empty
-            if s2_data.get('s2_citation_count') is not None and author_record['current_s2_citation_count'] is None:
-                update_data['s2_citation_count'] = s2_data['s2_citation_count']
-                updates_made.append(f"s2_citation_count: {s2_data['s2_citation_count']}")
-
-            # H-index - use aggregated S2 data if author_profiles field is empty
-            if s2_data.get('s2_h_index') is not None and author_record['current_s2_h_index'] is None:
-                update_data['s2_h_index'] = s2_data['s2_h_index']
-                updates_made.append(f"s2_h_index: {s2_data['s2_h_index']}")
-
-            if not update_data:
-                return False
-
-            # Build UPDATE query
-            set_clauses = []
-            params = []
-
-            for field, value in update_data.items():
-                set_clauses.append(f"{field} = %s")
-                params.append(value)
-
-            set_clauses.append("updated_at = CURRENT_TIMESTAMP")
-
-            update_query = f"""
-                UPDATE author_profiles
-                SET {', '.join(set_clauses)}
-                WHERE id = %s
-            """
-            params.append(author_record['id'])
-
-            # Execute update
-            result = self.db_manager.execute_query(update_query, params)
-
-            if result:
-                if updates_made:
-                    self.logger.debug(f"Successfully synced author {author_record['dblp_author_name']} - Updated: {', '.join(updates_made)}")
+        # Aggregate affiliations (combine all unique affiliations)
+        affiliations_list = []
+        for affiliations in s2_profiles['affiliations'].dropna():
+            if affiliations:
+                if isinstance(affiliations, list):
+                    affiliations_list.extend([str(aff) for aff in affiliations if aff])
                 else:
-                    self.logger.debug(f"No updates needed for author {author_record['dblp_author_name']}")
-                return True
-            else:
-                self.logger.error(f"Failed to sync author {author_record['id']} - Query execution failed")
-                return False
+                    affiliations_list.append(str(affiliations))
 
-        except Exception as e:
-            self.logger.error(f"Error syncing author {author_record['id']}: {e}")
-            return False
+        affiliations_str = ','.join(list(set(affiliations_list))) if affiliations_list else None
+
+        # Sum paper counts and citation counts
+        paper_count = s2_profiles['paper_count'].fillna(0).sum()
+        paper_count = int(paper_count) if paper_count > 0 else None
+
+        citation_count = s2_profiles['citation_count'].fillna(0).sum()
+        citation_count = int(citation_count) if citation_count > 0 else None
+
+        # Take maximum H-index
+        h_index = s2_profiles['h_index'].fillna(0).max()
+        h_index = int(h_index) if h_index > 0 else None
+
+        return {
+            'homepage': homepage,
+            'affiliations': affiliations_str,
+            'paper_count': paper_count,
+            'citation_count': citation_count,
+            'h_index': h_index
+        }
 
     def get_sync_statistics(self) -> Dict:
         """Get statistics about available cached data and sync status"""
@@ -406,14 +297,3 @@ class S2AuthorProfileSyncService:
             self.logger.error(f"Failed to get sync statistics: {e}")
             return {'error': str(e)}
 
-    def _update_stats_thread_safe(self, stats: Dict, sync_result: bool, author_name: str):
-        """Thread-safe statistics update"""
-        with self._stats_lock:
-            stats['total_authors_processed'] += 1
-            if sync_result:
-                stats['authors_synced'] += 1
-
-            # Progress logging every 10 records
-            if stats['total_authors_processed'] % 10 == 0:
-                total = stats.get('total_authors', 0)
-                self.logger.info(f"Processed {stats['total_authors_processed']}/{total} authors")
