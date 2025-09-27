@@ -94,7 +94,6 @@ def main():
             logger.debug("Verbose logging enabled")
 
         # Load configuration and initialize database
-        config = AppConfig.from_env()
         db_manager = get_db_manager()
         logger.info("Database connection established")
 

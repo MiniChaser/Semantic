@@ -70,7 +70,7 @@ class S2AuthorProfileSyncService:
         self.logger.info("Starting S2 author profile sync from cached data...")
 
         try:
-            # Get authors that need S2 enrichment from cached data
+            # Get authors that need S2 enrichment (without JOIN to handle comma-separated IDs)
             query = """
                 SELECT
                     ap.id,
@@ -81,17 +81,8 @@ class S2AuthorProfileSyncService:
                     ap.s2_affiliations as current_s2_affiliations,
                     ap.s2_paper_count as current_s2_paper_count,
                     ap.s2_citation_count as current_s2_citation_count,
-                    ap.s2_h_index as current_s2_h_index,
-                    -- S2 cached data (sources)
-                    sap.name as s2_name,
-                    sap.url as s2_homepage,
-                    sap.affiliations as s2_affiliations,
-                    sap.paper_count as s2_paper_count,
-                    sap.citation_count as s2_citation_count,
-                    sap.h_index as s2_h_index,
-                    sap.updated_at as s2_data_updated
+                    ap.s2_h_index as current_s2_h_index
                 FROM author_profiles ap
-                JOIN s2_author_profiles sap ON ap.s2_author_id = sap.s2_author_id
                 WHERE ap.s2_author_id IS NOT NULL
                   AND ap.s2_author_id != ''
                   AND (ap.homepage IS NULL
@@ -159,9 +150,110 @@ class S2AuthorProfileSyncService:
                 'processing_time': time.time() - start_time
             }
 
+    def _fetch_and_aggregate_s2_data(self, s2_author_ids: list) -> Dict:
+        """
+        Fetch and aggregate S2 data from multiple s2_author_profiles records
+
+        Args:
+            s2_author_ids: List of s2 author IDs
+
+        Returns:
+            Aggregated S2 data dictionary
+        """
+        if not s2_author_ids:
+            return {}
+
+        # Remove duplicates and empty values
+        unique_ids = list(set([str(id_).strip() for id_ in s2_author_ids if id_ and str(id_).strip()]))
+
+        if not unique_ids:
+            return {}
+
+        try:
+            # Build IN clause for multiple IDs
+            placeholders = ','.join(['%s'] * len(unique_ids))
+            query = f"""
+                SELECT
+                    s2_author_id,
+                    name,
+                    url,
+                    affiliations,
+                    paper_count,
+                    citation_count,
+                    h_index,
+                    updated_at
+                FROM s2_author_profiles
+                WHERE s2_author_id IN ({placeholders})
+                ORDER BY updated_at DESC
+            """
+
+            s2_profiles = self.db_manager.fetch_all(query, unique_ids)
+
+            if not s2_profiles:
+                return {}
+
+            # Aggregate the data
+            aggregated = {
+                'names': [],
+                'urls': [],
+                'affiliations_list': [],
+                'paper_counts': [],
+                'citation_counts': [],
+                'h_indices': [],
+                'latest_update': None
+            }
+
+            for profile in s2_profiles:
+                # Collect names
+                if profile['name']:
+                    aggregated['names'].append(str(profile['name']))
+
+                # Collect URLs (first non-empty one will be used)
+                if profile['url'] and not aggregated['urls']:
+                    aggregated['urls'].append(str(profile['url']))
+
+                # Collect affiliations
+                if profile['affiliations']:
+                    if isinstance(profile['affiliations'], list):
+                        for aff in profile['affiliations']:
+                            if aff:
+                                aggregated['affiliations_list'].append(str(aff))
+                    else:
+                        aggregated['affiliations_list'].append(str(profile['affiliations']))
+
+                # Collect numeric values
+                if profile['paper_count'] is not None:
+                    aggregated['paper_counts'].append(int(profile['paper_count']))
+
+                if profile['citation_count'] is not None:
+                    aggregated['citation_counts'].append(int(profile['citation_count']))
+
+                if profile['h_index'] is not None:
+                    aggregated['h_indices'].append(int(profile['h_index']))
+
+                # Track latest update
+                if profile['updated_at']:
+                    if not aggregated['latest_update'] or profile['updated_at'] > aggregated['latest_update']:
+                        aggregated['latest_update'] = profile['updated_at']
+
+            # Return final aggregated values
+            return {
+                's2_name': ','.join(aggregated['names']) if aggregated['names'] else None,
+                's2_homepage': aggregated['urls'][0] if aggregated['urls'] else None,
+                's2_affiliations': list(set(aggregated['affiliations_list'])) if aggregated['affiliations_list'] else None,
+                's2_paper_count': sum(aggregated['paper_counts']) if aggregated['paper_counts'] else None,
+                's2_citation_count': sum(aggregated['citation_counts']) if aggregated['citation_counts'] else None,
+                's2_h_index': max(aggregated['h_indices']) if aggregated['h_indices'] else None,
+                's2_data_updated': aggregated['latest_update']
+            }
+
+        except Exception as e:
+            self.logger.error(f"Error fetching/aggregating S2 data for IDs {unique_ids}: {e}")
+            return {}
+
     def _sync_single_author(self, author_record: Dict) -> bool:
         """
-        Sync a single author record with cached S2 data
+        Sync a single author record with cached S2 data (supports comma-separated s2_author_ids)
 
         Args:
             author_record: Author data from query
@@ -170,23 +262,37 @@ class S2AuthorProfileSyncService:
             True if successful, False otherwise
         """
         try:
-            # Build update data
+            # Split comma-separated s2_author_ids and fetch aggregated S2 data
+            s2_author_id_str = str(author_record['s2_author_id']).strip()
+            s2_author_ids = [id_.strip() for id_ in s2_author_id_str.split(',') if id_.strip()]
+
+            if not s2_author_ids:
+                self.logger.debug(f"No valid S2 author IDs for {author_record['dblp_author_name']}")
+                return False
+
+            # Fetch and aggregate S2 data from multiple profiles
+            s2_data = self._fetch_and_aggregate_s2_data(s2_author_ids)
+
+            if not s2_data:
+                self.logger.debug(f"No S2 data found for IDs {s2_author_ids} for author {author_record['dblp_author_name']}")
+                return False
+
+            # Build update data using aggregated S2 data
             update_data = {}
             updates_made = []  # Track what we're updating for logging
 
             # Homepage URL - use S2 data if author_profiles field is empty
-            if author_record['s2_homepage'] and not author_record['current_homepage']:
-                update_data['homepage'] = author_record['s2_homepage']
-                updates_made.append(f"homepage: '{author_record['s2_homepage']}'")
+            if s2_data.get('s2_homepage') and not author_record['current_homepage']:
+                update_data['homepage'] = s2_data['s2_homepage']
+                updates_made.append(f"homepage: '{s2_data['s2_homepage']}'")
 
-            # Affiliations (convert JSONB array to comma-separated string)
-            if author_record['s2_affiliations'] and not author_record['current_s2_affiliations']:
+            # Affiliations (convert list to comma-separated string)
+            if s2_data.get('s2_affiliations') and not author_record['current_s2_affiliations']:
                 try:
-                    if isinstance(author_record['s2_affiliations'], list):
-                        affiliations_str = ','.join([str(aff) for aff in author_record['s2_affiliations'] if aff])
+                    if isinstance(s2_data['s2_affiliations'], list):
+                        affiliations_str = ','.join([str(aff) for aff in s2_data['s2_affiliations'] if aff])
                     else:
-                        # Already a string or JSON string
-                        affiliations_str = str(author_record['s2_affiliations'])
+                        affiliations_str = str(s2_data['s2_affiliations'])
 
                     if affiliations_str:
                         update_data['s2_affiliations'] = affiliations_str
@@ -194,20 +300,20 @@ class S2AuthorProfileSyncService:
                 except Exception as e:
                     self.logger.warning(f"Error processing affiliations for {author_record['dblp_author_name']}: {e}")
 
-            # Paper count - use S2 data if author_profiles field is empty
-            if author_record['s2_paper_count'] is not None and author_record['current_s2_paper_count'] is None:
-                update_data['s2_paper_count'] = author_record['s2_paper_count']
-                updates_made.append(f"s2_paper_count: {author_record['s2_paper_count']}")
+            # Paper count - use aggregated S2 data if author_profiles field is empty
+            if s2_data.get('s2_paper_count') is not None and author_record['current_s2_paper_count'] is None:
+                update_data['s2_paper_count'] = s2_data['s2_paper_count']
+                updates_made.append(f"s2_paper_count: {s2_data['s2_paper_count']}")
 
-            # Citation count - use S2 data if author_profiles field is empty
-            if author_record['s2_citation_count'] is not None and author_record['current_s2_citation_count'] is None:
-                update_data['s2_citation_count'] = author_record['s2_citation_count']
-                updates_made.append(f"s2_citation_count: {author_record['s2_citation_count']}")
+            # Citation count - use aggregated S2 data if author_profiles field is empty
+            if s2_data.get('s2_citation_count') is not None and author_record['current_s2_citation_count'] is None:
+                update_data['s2_citation_count'] = s2_data['s2_citation_count']
+                updates_made.append(f"s2_citation_count: {s2_data['s2_citation_count']}")
 
-            # H-index - use S2 data if author_profiles field is empty
-            if author_record['s2_h_index'] is not None and author_record['current_s2_h_index'] is None:
-                update_data['s2_h_index'] = author_record['s2_h_index']
-                updates_made.append(f"s2_h_index: {author_record['s2_h_index']}")
+            # H-index - use aggregated S2 data if author_profiles field is empty
+            if s2_data.get('s2_h_index') is not None and author_record['current_s2_h_index'] is None:
+                update_data['s2_h_index'] = s2_data['s2_h_index']
+                updates_made.append(f"s2_h_index: {s2_data['s2_h_index']}")
 
             if not update_data:
                 return False
