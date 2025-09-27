@@ -9,7 +9,7 @@ import logging
 import time
 from typing import Dict
 
-from .s2_author_profile_batch_service import S2AuthorProfileBatchService
+from ._s2_author_profile_batch_service import S2AuthorProfileBatchService
 
 
 class S2AuthorEnrichmentService:
