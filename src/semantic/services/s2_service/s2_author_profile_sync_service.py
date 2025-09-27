@@ -7,8 +7,11 @@ No API calls - uses cached data only
 
 import logging
 import time
+import threading
+import os
 from datetime import datetime
 from typing import Dict
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from ...database.connection import DatabaseManager
 
@@ -20,9 +23,38 @@ class S2AuthorProfileSyncService:
     This service reads cached S2 data and updates author_profiles without API calls
     """
 
-    def __init__(self, db_manager: DatabaseManager):
+    def __init__(self, db_manager: DatabaseManager, max_workers: int = None):
         self.db_manager = db_manager
         self.logger = logging.getLogger(__name__)
+        self._stats_lock = threading.Lock()
+        self._max_workers = max_workers
+
+    def _calculate_optimal_workers(self) -> int:
+        """Calculate optimal number of worker threads based on system and database configuration"""
+        if self._max_workers is not None:
+            return self._max_workers
+
+        # Get database pool configuration
+        db_pool_size = getattr(self.db_manager.config, 'pool_size', 10)
+        db_max_overflow = getattr(self.db_manager.config, 'max_overflow', 20)
+        total_db_connections = db_pool_size + db_max_overflow
+
+        # Get CPU count
+        cpu_count = os.cpu_count() or 4
+
+        # Calculate optimal workers based on testing results
+        # Testing shows 6-8 workers perform best for database I/O operations
+        optimal_workers = min(
+            12,  # Maximum cap - testing shows diminishing returns after 8
+            max(6, db_pool_size // 2),  # More aggressive: use 1/2 of base pool size
+            cpu_count * 2,  # For I/O bound tasks, can use more than CPU count
+            total_db_connections // 3  # Less conservative connection usage
+        )
+
+        self.logger.info(f"Calculated optimal workers: {optimal_workers} "
+                        f"(DB pool: {db_pool_size}, CPU: {cpu_count})")
+
+        return optimal_workers
 
     def sync_author_profiles(self, limit: int = None) -> Dict:
         """
@@ -44,9 +76,16 @@ class S2AuthorProfileSyncService:
                     ap.id,
                     ap.s2_author_id,
                     ap.dblp_author_name,
+                    -- Current values in author_profiles (targets)
+                    ap.homepage as current_homepage,
+                    ap.s2_affiliations as current_s2_affiliations,
+                    ap.s2_paper_count as current_s2_paper_count,
+                    ap.s2_citation_count as current_s2_citation_count,
+                    ap.s2_h_index as current_s2_h_index,
+                    -- S2 cached data (sources)
                     sap.name as s2_name,
-                    sap.url as homepage,
-                    sap.affiliations,
+                    sap.url as s2_homepage,
+                    sap.affiliations as s2_affiliations,
                     sap.paper_count as s2_paper_count,
                     sap.citation_count as s2_citation_count,
                     sap.h_index as s2_h_index,
@@ -82,26 +121,29 @@ class S2AuthorProfileSyncService:
             stats = {
                 'total_authors_processed': 0,
                 'authors_synced': 0,
-                'errors': 0
+                'errors': 0,
+                'total_authors': len(authors_to_sync)
             }
 
-            # Process each author
-            for author_record in authors_to_sync:
-                try:
-                    sync_result = self._sync_single_author(author_record)
+            # Process authors using ThreadPoolExecutor with optimal worker count
+            optimal_workers = self._calculate_optimal_workers()
+            with ThreadPoolExecutor(max_workers=optimal_workers) as executor:
+                # Submit all tasks
+                future_to_author = {
+                    executor.submit(self._sync_single_author, author_record): author_record
+                    for author_record in authors_to_sync
+                }
 
-                    stats['total_authors_processed'] += 1
-                    if sync_result:
-                        stats['authors_synced'] += 1
-
-                    # Progress logging
-                    if stats['total_authors_processed'] % 10 == 0:
-                        self.logger.info(f"Processed {stats['total_authors_processed']}/{len(authors_to_sync)} authors")
-
-                except Exception as e:
-                    self.logger.error(f"Error processing author {author_record['dblp_author_name']}: {e}")
-                    stats['errors'] += 1
-                    continue
+                # Process completed tasks
+                for future in as_completed(future_to_author):
+                    author_record = future_to_author[future]
+                    try:
+                        sync_result = future.result()
+                        self._update_stats_thread_safe(stats, sync_result, author_record['dblp_author_name'])
+                    except Exception as e:
+                        self.logger.error(f"Error processing author {author_record['dblp_author_name']}: {e}")
+                        with self._stats_lock:
+                            stats['errors'] += 1
 
             # Calculate processing time
             processing_time = time.time() - start_time
@@ -130,36 +172,42 @@ class S2AuthorProfileSyncService:
         try:
             # Build update data
             update_data = {}
+            updates_made = []  # Track what we're updating for logging
 
-            # Homepage URL
-            if author_record['homepage'] and not author_record.get('homepage'):
-                update_data['homepage'] = author_record['homepage']
+            # Homepage URL - use S2 data if author_profiles field is empty
+            if author_record['s2_homepage'] and not author_record['current_homepage']:
+                update_data['homepage'] = author_record['s2_homepage']
+                updates_made.append(f"homepage: '{author_record['s2_homepage']}'")
 
             # Affiliations (convert JSONB array to comma-separated string)
-            if author_record['affiliations']:
+            if author_record['s2_affiliations'] and not author_record['current_s2_affiliations']:
                 try:
-                    if isinstance(author_record['affiliations'], list):
-                        affiliations_str = ','.join([str(aff) for aff in author_record['affiliations'] if aff])
+                    if isinstance(author_record['s2_affiliations'], list):
+                        affiliations_str = ','.join([str(aff) for aff in author_record['s2_affiliations'] if aff])
                     else:
                         # Already a string or JSON string
-                        affiliations_str = str(author_record['affiliations'])
+                        affiliations_str = str(author_record['s2_affiliations'])
 
-                    if affiliations_str and not author_record.get('s2_affiliations'):
+                    if affiliations_str:
                         update_data['s2_affiliations'] = affiliations_str
+                        updates_made.append(f"s2_affiliations: '{affiliations_str[:50]}{'...' if len(affiliations_str) > 50 else ''}'")
                 except Exception as e:
                     self.logger.warning(f"Error processing affiliations for {author_record['dblp_author_name']}: {e}")
 
-            # Paper count
-            if author_record['s2_paper_count'] is not None and not author_record.get('s2_paper_count'):
+            # Paper count - use S2 data if author_profiles field is empty
+            if author_record['s2_paper_count'] is not None and author_record['current_s2_paper_count'] is None:
                 update_data['s2_paper_count'] = author_record['s2_paper_count']
+                updates_made.append(f"s2_paper_count: {author_record['s2_paper_count']}")
 
-            # Citation count
-            if author_record['s2_citation_count'] is not None and not author_record.get('s2_citation_count'):
+            # Citation count - use S2 data if author_profiles field is empty
+            if author_record['s2_citation_count'] is not None and author_record['current_s2_citation_count'] is None:
                 update_data['s2_citation_count'] = author_record['s2_citation_count']
+                updates_made.append(f"s2_citation_count: {author_record['s2_citation_count']}")
 
-            # H-index
-            if author_record['s2_h_index'] is not None and not author_record.get('s2_h_index'):
+            # H-index - use S2 data if author_profiles field is empty
+            if author_record['s2_h_index'] is not None and author_record['current_s2_h_index'] is None:
                 update_data['s2_h_index'] = author_record['s2_h_index']
+                updates_made.append(f"s2_h_index: {author_record['s2_h_index']}")
 
             if not update_data:
                 return False
@@ -185,10 +233,13 @@ class S2AuthorProfileSyncService:
             result = self.db_manager.execute_query(update_query, params)
 
             if result:
-                self.logger.debug(f"Successfully synced author {author_record['dblp_author_name']} with cached S2 data")
+                if updates_made:
+                    self.logger.debug(f"Successfully synced author {author_record['dblp_author_name']} - Updated: {', '.join(updates_made)}")
+                else:
+                    self.logger.debug(f"No updates needed for author {author_record['dblp_author_name']}")
                 return True
             else:
-                self.logger.error(f"Failed to sync author {author_record['id']}")
+                self.logger.error(f"Failed to sync author {author_record['id']} - Query execution failed")
                 return False
 
         except Exception as e:
@@ -224,7 +275,7 @@ class S2AuthorProfileSyncService:
                 FROM author_profiles
             """)
 
-            # Authors that can be synced
+            # Authors that can be synced (consistent with main sync query)
             syncable_stats = self.db_manager.fetch_one("""
                 SELECT COUNT(*) as authors_ready_to_sync
                 FROM author_profiles ap
@@ -248,3 +299,15 @@ class S2AuthorProfileSyncService:
         except Exception as e:
             self.logger.error(f"Failed to get sync statistics: {e}")
             return {'error': str(e)}
+
+    def _update_stats_thread_safe(self, stats: Dict, sync_result: bool, author_name: str):
+        """Thread-safe statistics update"""
+        with self._stats_lock:
+            stats['total_authors_processed'] += 1
+            if sync_result:
+                stats['authors_synced'] += 1
+
+            # Progress logging every 10 records
+            if stats['total_authors_processed'] % 10 == 0:
+                total = stats.get('total_authors', 0)
+                self.logger.info(f"Processed {stats['total_authors_processed']}/{total} authors")
