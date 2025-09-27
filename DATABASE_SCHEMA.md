@@ -4,11 +4,12 @@ This document provides comprehensive information about all database tables used 
 
 ## 📊 Table Overview
 
-The system maintains 8 main tables organized into different functional categories:
+The system maintains 9 main tables organized into different functional categories:
 
-### Core Data Tables (3 tables)
+### Core Data Tables (4 tables)
 - `dblp_papers` - Raw DBLP paper data
 - `enriched_papers` - Papers enriched with Semantic Scholar data
+- `s2_author_profiles` - Cached S2 author data from API
 - `s2_processing_meta` - Semantic Scholar processing metadata
 
 ### Author Analysis Tables (3 tables)
@@ -170,7 +171,36 @@ data_completeness_score   DECIMAL(5,3),   -- Completeness score
 
 ---
 
-### 3. s2_processing_meta
+### 3. s2_author_profiles
+**Purpose**: Cache S2 author profile data from Semantic Scholar Author API
+
+**Structure**:
+```sql
+CREATE TABLE s2_author_profiles (
+    id                  SERIAL PRIMARY KEY,
+    s2_author_id        VARCHAR(255) UNIQUE NOT NULL,     -- S2 unique author ID
+    name                TEXT,                             -- Author name from S2
+    url                 TEXT,                             -- S2 author profile URL
+    affiliations        JSONB,                            -- Author affiliations from S2
+    paper_count         INTEGER,                          -- Total papers in S2
+    citation_count      INTEGER,                          -- Total citation count
+    h_index             INTEGER,                          -- H-index from S2
+    raw_data            JSONB,                            -- Complete S2 API response
+    created_at          TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at          TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+```
+
+**Key Indexes**:
+- `idx_s2_author_profiles_author_id` - Fast author ID lookups
+- `idx_s2_author_profiles_updated_at` - Timestamp-based cache invalidation
+- `idx_s2_author_profiles_created_at` - Creation time queries
+
+**Purpose**: This table serves as a cache for Semantic Scholar Author API responses, enabling batch processing and reducing API calls by storing author metadata with timestamp-based invalidation.
+
+---
+
+### 4. s2_processing_meta
 **Purpose**: Track Semantic Scholar enrichment process statistics
 
 ```sql
@@ -195,7 +225,7 @@ CREATE TABLE s2_processing_meta (
 
 ## 👥 Author Analysis Tables
 
-### 4. authorships
+### 5. authorships
 **Purpose**: Store paper-author relationships with matching metadata
 
 ```sql
@@ -222,7 +252,7 @@ CREATE TABLE authorships (
 
 ---
 
-### 5. author_profiles
+### 6. author_profiles
 **Purpose**: Consolidated author profiles with basic statistics
 
 ```sql
@@ -248,7 +278,7 @@ CREATE TABLE author_profiles (
 
 ---
 
-### 6. final_author_table
+### 7. final_author_table
 **Purpose**: Final unified author table with all computed metrics
 
 ```sql
@@ -307,7 +337,7 @@ CREATE TABLE final_author_table (
 
 ## 🛠️ System Tables
 
-### 7. dblp_processing_meta
+### 8. dblp_processing_meta
 **Purpose**: Track DBLP data processing operations
 
 ```sql
@@ -329,7 +359,7 @@ CREATE TABLE dblp_processing_meta (
 
 ---
 
-### 8. scheduler_jobs
+### 9. scheduler_jobs
 **Purpose**: APScheduler job persistence for automated processing
 
 ```sql
@@ -352,10 +382,11 @@ CREATE TABLE scheduler_jobs (
 ### Simplified Processing Pipeline Flow:
 
 1. **DBLP Import**: `dblp_papers` ← XML parsing
-2. **S2 Enrichment**: `enriched_papers` ← DBLP + Semantic Scholar API
-3. **Author Extraction**: `authorships` ← enriched_papers analysis  
-4. **Profile Building**: `author_profiles` ← authorships aggregation
-5. **Final Integration**: `final_author_table` ← direct calculation from authorships + enriched_papers
+2. **S2 Paper Enrichment**: `enriched_papers` ← DBLP + Semantic Scholar Paper API
+3. **Author Extraction**: `authorships` ← enriched_papers analysis
+4. **S2 Author Caching**: `s2_author_profiles` ← Semantic Scholar Author API
+5. **Profile Building**: `author_profiles` ← authorships + s2_author_profiles
+6. **Final Integration**: `final_author_table` ← direct calculation from authorships + enriched_papers + author_profiles
 
 ### Key Relationships:
 
@@ -363,13 +394,15 @@ CREATE TABLE scheduler_jobs (
 -- Core paper relationship
 enriched_papers.dblp_paper_id → dblp_papers.id
 
--- Author relationships  
+-- Author relationships
 authorships.paper_id → enriched_papers.id
-author_profiles.s2_author_id ← authorships.s2_author_id
+authorships.s2_author_id ← enriched_papers.semantic_authors
+s2_author_profiles.s2_author_id ← authorships.s2_author_id (cache lookup)
+author_profiles.s2_author_id ← authorships.s2_author_id + s2_author_profiles
 final_author_table.s2_author_id → author_profiles.s2_author_id
 
 -- All final metrics computed directly from:
--- authorships + enriched_papers + author_profiles
+-- authorships + enriched_papers + author_profiles + s2_author_profiles
 ```
 
 ---

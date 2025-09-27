@@ -113,8 +113,14 @@ TARGET_VENUES=acl,naacl,emnlp,findings
 The service runs these scripts sequentially:
 1. `scripts/setup_database.py` - Database initialization
 2. `scripts/run_dblp_service_once.py` - DBLP data import
-3. `scripts/run_s2_enrichment.py` - Semantic Scholar enrichment
-4. `scripts/run_all_steps.py` - Author processing pipeline
+3. `scripts/run_s2_enrichment.py` - Semantic Scholar paper enrichment (incremental by timestamp)
+4. `scripts/run_all_steps.py` - Complete author processing pipeline:
+   - Step 1: Create authorships from enriched papers
+   - Step 2: Create S2 author profiles via API (incremental by timestamp)
+   - Step 3: Create consolidated author profiles
+   - Step 4: Enrich author profiles with S2 data
+   - Step 5: Generate final author table
+   - Step 6: Generate processing reports
 
 ### Scheduling
 - **Default**: Runs every 7 days
@@ -125,6 +131,11 @@ The service runs these scripts sequentially:
 - If any script fails, the execution stops
 - The service waits for the next scheduled interval before retrying
 - All errors are logged with timestamps
+
+### Incremental Processing
+- **S2 API Scripts**: Both `run_s2_enrichment.py` and `step2_create_s2_author_profiles.py` run incrementally based on timestamps
+- Only processes new or updated records since the last successful run
+- Reduces API calls and improves performance on subsequent runs
 
 ## 🔧 Troubleshooting
 
