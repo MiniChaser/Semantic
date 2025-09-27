@@ -29,13 +29,15 @@ class AuthorshipPandasService:
     4. Processing ALL papers with semantic_authors (fixing data completeness issue)
     """
 
-    def __init__(self, db_manager: DatabaseManager):
+    def __init__(self, db_manager: DatabaseManager, incremental_mode: bool = True):
         self.db_manager = db_manager
         self.matcher = AuthorMatcher()
+        self.incremental_mode = incremental_mode
 
         # Data containers for efficient processing
         self.papers_df: Optional[pd.DataFrame] = None
         self.authorships_df: Optional[pd.DataFrame] = None
+        self.papers_to_update: List[int] = []  # Track paper IDs that need updates
 
     def create_authorships_table(self) -> bool:
         """
@@ -88,34 +90,65 @@ class AuthorshipPandasService:
 
     def load_all_papers_data(self) -> bool:
         """
-        Load ALL papers with dblp_authors data to ensure complete coverage
-        This ensures all DBLP authors are included in the authorships table
+        Load papers with dblp_authors data based on incremental_mode
+        If incremental_mode is True, only loads papers that need updates
 
         Returns:
             True if data loaded successfully, False otherwise
         """
         try:
-            logger.info("Loading all papers with dblp_authors data...")
-
-            # Load ALL papers with dblp_authors (semantic_authors is optional)
-            papers_query = """
-            SELECT
-                id, semantic_paper_id, dblp_title,
-                dblp_authors, semantic_authors
-            FROM enriched_papers
-            WHERE dblp_authors IS NOT NULL
-            ORDER BY id
-            """
+            if self.incremental_mode:
+                logger.info("Loading papers that need updates (incremental mode)...")
+                papers_query = """
+                SELECT DISTINCT
+                    ep.id, ep.semantic_paper_id, ep.dblp_title,
+                    ep.dblp_authors, ep.semantic_authors, ep.updated_at
+                FROM enriched_papers ep
+                WHERE ep.dblp_authors IS NOT NULL
+                  AND (
+                    -- Papers not in authorships table yet
+                    NOT EXISTS (
+                        SELECT 1 FROM authorships a
+                        WHERE a.paper_id = ep.id
+                    )
+                    -- OR papers updated after authorships were created
+                    OR EXISTS (
+                        SELECT 1 FROM authorships a
+                        WHERE a.paper_id = ep.id
+                          AND ep.updated_at > a.created_at
+                    )
+                  )
+                ORDER BY ep.id
+                """
+            else:
+                logger.info("Loading all papers with dblp_authors data (full mode)...")
+                papers_query = """
+                SELECT
+                    id, semantic_paper_id, dblp_title,
+                    dblp_authors, semantic_authors, updated_at
+                FROM enriched_papers
+                WHERE dblp_authors IS NOT NULL
+                ORDER BY id
+                """
 
             papers_data = self.db_manager.fetch_all(papers_query)
 
             if not papers_data:
-                logger.warning("No papers data found with dblp_authors")
-                return False
+                if self.incremental_mode:
+                    logger.info("No papers need updates - all authorships are up to date")
+                    return False  # No work needed
+                else:
+                    logger.warning("No papers data found with dblp_authors")
+                    return False
 
             # Convert to pandas DataFrame for efficient processing
             self.papers_df = pd.DataFrame(papers_data)
-            logger.info(f"Loaded {len(self.papers_df)} papers with dblp_authors data")
+
+            # Track which papers need updates for incremental deletion
+            self.papers_to_update = self.papers_df['id'].tolist()
+
+            mode_desc = "incremental" if self.incremental_mode else "full"
+            logger.info(f"Loaded {len(self.papers_df)} papers with dblp_authors data ({mode_desc} mode)")
 
             return True
 
@@ -221,7 +254,7 @@ class AuthorshipPandasService:
     def batch_insert_authorships_pandas(self) -> bool:
         """
         High-performance batch insert using pandas.to_sql
-        Replaces the previous slow loop-based approach with direct pandas insertion
+        Supports both incremental and full update modes
 
         Returns:
             True if successful, False otherwise
@@ -240,9 +273,17 @@ class AuthorshipPandasService:
                 logger.error("SQLAlchemy not installed. Please install with: pip install sqlalchemy>=1.4.0")
                 return self._fallback_to_batch_insert()
 
-            # Clear existing data first
-            self.db_manager.execute_query("DELETE FROM authorships;")
-            logger.info("Cleared existing authorships data")
+            # Handle data cleanup based on mode
+            if self.incremental_mode and self.papers_to_update:
+                # Delete only records for papers that are being updated
+                paper_ids_str = ','.join(map(str, self.papers_to_update))
+                delete_query = f"DELETE FROM authorships WHERE paper_id IN ({paper_ids_str});"
+                self.db_manager.execute_query(delete_query)
+                logger.info(f"Cleared existing authorships data for {len(self.papers_to_update)} papers (incremental mode)")
+            elif not self.incremental_mode:
+                # Full mode: clear all existing data
+                self.db_manager.execute_query("DELETE FROM authorships;")
+                logger.info("Cleared existing authorships data (full mode)")
 
             # Prepare DataFrame for insertion
             insert_df = self._prepare_dataframe_for_insertion()
@@ -266,7 +307,8 @@ class AuthorshipPandasService:
             end_time = datetime.now()
             insertion_time = (end_time - start_time).total_seconds()
 
-            logger.info(f"Successfully inserted all {len(insert_df)} authorships using pandas.to_sql")
+            mode_desc = "incremental" if self.incremental_mode else "full"
+            logger.info(f"Successfully inserted all {len(insert_df)} authorships using pandas.to_sql ({mode_desc} mode)")
             logger.info(f"Insertion completed in {insertion_time:.2f} seconds")
 
             # Close the engine
@@ -353,12 +395,25 @@ class AuthorshipPandasService:
     def _fallback_to_batch_insert(self) -> bool:
         """
         Fallback to the original batch insert method if to_sql fails
+        Supports both incremental and full update modes
 
         Returns:
             True if successful, False otherwise
         """
         try:
             logger.info("Using fallback batch insert method...")
+
+            # Handle data cleanup based on mode (same logic as main method)
+            if self.incremental_mode and self.papers_to_update:
+                # Delete only records for papers that are being updated
+                paper_ids_str = ','.join(map(str, self.papers_to_update))
+                delete_query = f"DELETE FROM authorships WHERE paper_id IN ({paper_ids_str});"
+                self.db_manager.execute_query(delete_query)
+                logger.info(f"Cleared existing authorships data for {len(self.papers_to_update)} papers (incremental mode - fallback)")
+            elif not self.incremental_mode:
+                # Full mode: clear all existing data
+                self.db_manager.execute_query("DELETE FROM authorships;")
+                logger.info("Cleared existing authorships data (full mode - fallback)")
 
             insert_sql = """
             INSERT INTO authorships (
@@ -400,7 +455,8 @@ class AuthorshipPandasService:
                     logger.error(f"Failed to insert batch starting at index {i}")
                     return False
 
-            logger.info(f"Successfully inserted all {total_inserted} authorships using fallback method")
+            mode_desc = "incremental" if self.incremental_mode else "full"
+            logger.info(f"Successfully inserted all {total_inserted} authorships using fallback method ({mode_desc} mode)")
             return True
 
         except Exception as e:
@@ -410,17 +466,32 @@ class AuthorshipPandasService:
     def populate_authorships_table_pandas(self) -> Dict:
         """
         Main method to populate authorships table using pandas optimization
+        Supports both incremental and full update modes
 
         Returns:
             Statistics about the population process
         """
         try:
-            logger.info("Starting pandas-optimized authorships table population...")
+            mode_desc = "incremental" if self.incremental_mode else "full"
+            logger.info(f"Starting pandas-optimized authorships table population ({mode_desc} mode)...")
             start_time = datetime.now()
 
-            # Step 1: Load all papers data
+            # Step 1: Load papers data (based on incremental_mode)
             if not self.load_all_papers_data():
-                return {'error': 'Failed to load papers data'}
+                if self.incremental_mode:
+                    logger.info("No papers need updates - returning success with zero operations")
+                    return {
+                        'processed_papers': 0,
+                        'total_authorships': 0,
+                        'matched_authors': 0,
+                        'unmatched_authors': 0,
+                        'processing_time_seconds': 0,
+                        'optimization_method': 'pandas_batch_processing',
+                        'update_mode': 'incremental',
+                        'data_completeness': 'up_to_date'
+                    }
+                else:
+                    return {'error': 'Failed to load papers data'}
 
             # Step 2: Process author matching
             authorships_df = self.process_author_matching_pandas()
@@ -431,8 +502,12 @@ class AuthorshipPandasService:
             if not self.batch_insert_authorships_pandas():
                 return {'error': 'Failed to insert authorships data'}
 
-            # Step 4: Verify all DBLP authors are included
-            verification_stats = self.ensure_all_dblp_authors_included()
+            # Step 4: Verify all DBLP authors are included (only in full mode)
+            verification_stats = {}
+            if not self.incremental_mode:
+                verification_stats = self.ensure_all_dblp_authors_included()
+            else:
+                logger.info("Skipping full verification in incremental mode")
 
             # Calculate statistics
             end_time = datetime.now()
@@ -449,18 +524,21 @@ class AuthorshipPandasService:
                 'unmatched_authors': unmatched_count,
                 'processing_time_seconds': processing_time,
                 'optimization_method': 'pandas_batch_processing',
-                'data_completeness': 'complete_dblp_coverage'
+                'update_mode': mode_desc,
+                'data_completeness': 'complete_dblp_coverage' if not self.incremental_mode else 'incremental_update'
             }
 
-            # Add verification results to stats
-            if 'error' not in verification_stats:
+            # Add verification results to stats (only for full mode)
+            if not self.incremental_mode and 'error' not in verification_stats:
                 stats.update({
                     'missing_authors_count': verification_stats.get('missing_authors_count', 0),
                     'verification_complete': verification_stats.get('verification_complete', False),
                     'missing_authors_sample': verification_stats.get('missing_authors', [])[:5]
                 })
+            elif self.incremental_mode:
+                stats['papers_updated'] = len(self.papers_to_update)
 
-            logger.info("Pandas-optimized authorships population completed successfully")
+            logger.info(f"Pandas-optimized authorships population completed successfully ({mode_desc} mode)")
             return stats
 
         except Exception as e:
