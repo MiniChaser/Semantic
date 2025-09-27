@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Author Processing Step 4: Generate Reports
+Author Processing Step 6: Generate Reports
 Generates comprehensive reports and statistics for the Phase 1 implementation
 """
 
@@ -41,15 +41,15 @@ def setup_logging():
         format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
         handlers=[
             logging.StreamHandler(),
-            logging.FileHandler(log_dir / 'step4_generate_reports.log')
+            logging.FileHandler(log_dir / 'step6_generate_reports.log')
         ]
     )
 
 
 def main():
-    """Execute Step 4: Generate Reports"""
+    """Execute Step 6: Generate Reports"""
     
-    print("📊 Step 4: Generating Reports")
+    print("📊 Step 6: Generating Reports")
     print("=" * 40)
     
     try:
@@ -137,7 +137,7 @@ def main():
         
     except Exception as e:
         print(f"❌ Critical error: {e}")
-        logging.getLogger(__name__).error(f"Step 4 failed: {e}", exc_info=True)
+        logging.getLogger(__name__).error(f"Step 6 failed: {e}", exc_info=True)
         return 1
 
 

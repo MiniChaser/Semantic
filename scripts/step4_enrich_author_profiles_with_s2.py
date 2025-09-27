@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Author Processing Step 2.5: Sync Author Profiles with Cached S2 Data
+Author Processing Step 4: Sync Author Profiles with Cached S2 Data
 Enriches existing author profiles with S2 data from s2_author_profiles table (no API calls)
 """
 
@@ -29,7 +29,7 @@ def setup_logging(verbose: bool = False):
         format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
         handlers=[
             logging.StreamHandler(),
-            logging.FileHandler(log_dir / 'step2_5_s2_author_enrichment.log')
+            logging.FileHandler(log_dir / 'step4_enrich_author_profiles_with_s2.log')
         ]
     )
 
@@ -37,16 +37,16 @@ def setup_logging(verbose: bool = False):
 def parse_arguments():
     """Parse command line arguments"""
     parser = argparse.ArgumentParser(
-        description="Sync Author Profiles with Cached S2 Data (Step 2.5)",
+        description="Sync Author Profiles with Cached S2 Data (Step 4)",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 This script syncs author profiles with cached S2 data from s2_author_profiles table.
 No API calls are made - only database operations.
 
 Examples:
-  python step2_5_enrich_author_profiles_with_s2.py
-  python step2_5_enrich_author_profiles_with_s2.py --limit 100 --verbose
-  python step2_5_enrich_author_profiles_with_s2.py --stats-only
+  python step4_enrich_author_profiles_with_s2.py
+  python step4_enrich_author_profiles_with_s2.py --limit 100 --verbose
+  python step4_enrich_author_profiles_with_s2.py --stats-only
         """
     )
 
@@ -72,10 +72,10 @@ Examples:
 
 
 def main():
-    """Execute Step 2.5: Sync Author Profiles with Cached S2 Data"""
+    """Execute Step 4: Sync Author Profiles with Cached S2 Data"""
     args = parse_arguments()
 
-    print("Step 2.5: Syncing Author Profiles with Cached S2 Data")
+    print("Step 4: Syncing Author Profiles with Cached S2 Data")
     print("=" * 60)
     print("This step syncs author profiles with cached S2 data (NO API CALLS):")
     print("- Homepage URLs")
@@ -185,7 +185,7 @@ def main():
 
     except Exception as e:
         print(f"Critical error: {e}")
-        logging.getLogger(__name__).error(f"Step 2.5 failed: {e}", exc_info=True)
+        logging.getLogger(__name__).error(f"Step 4 failed: {e}", exc_info=True)
         return 1
 
 

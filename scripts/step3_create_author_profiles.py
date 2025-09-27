@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Author Processing Step 2: Create Author Profiles Table
+Author Processing Step 3: Create Author Profiles Table
 Creates and populates the author profiles table with unique author information
 
 Uses pandas-optimized processing mode for performance using batch processing
@@ -31,7 +31,7 @@ def setup_logging():
         format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
         handlers=[
             logging.StreamHandler(),
-            logging.FileHandler(log_dir / 'step2_create_author_profiles.log')
+            logging.FileHandler(log_dir / 'step3_create_author_profiles.log')
         ]
     )
 
@@ -39,14 +39,14 @@ def setup_logging():
 def parse_arguments():
     """Parse command line arguments"""
     parser = argparse.ArgumentParser(
-        description="Create Author Profiles Table (Step 2) - Pandas Mode Only",
+        description="Create Author Profiles Table (Step 3) - Pandas Mode Only",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Uses optimized pandas-based batch processing.
 
 Examples:
-  python step2_create_author_profiles.py
-  python step2_create_author_profiles.py --verbose
+  python step3_create_author_profiles.py
+  python step3_create_author_profiles.py --verbose
         """
     )
 
@@ -79,11 +79,11 @@ def run_pandas_mode(db_manager) -> Dict:
 
 
 def main():
-    """Execute Step 2: Create Author Profiles Table"""
+    """Execute Step 3: Create Author Profiles Table"""
 
     args = parse_arguments()
 
-    print("Step 2: Creating Author Profiles Table - Pandas Mode")
+    print("Step 3: Creating Author Profiles Table - Pandas Mode")
     print("=" * 50)
     print("Using pandas-optimized processing")
     print("=" * 50)

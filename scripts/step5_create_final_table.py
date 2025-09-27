@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Author Processing Step 3: Create Final Author Table
+Author Processing Step 5: Create Final Author Table
 Creates and populates the final target table with all computed metrics
 
 Uses pandas-optimized processing mode for performance using batch processing
@@ -31,7 +31,7 @@ def setup_logging():
         format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
         handlers=[
             logging.StreamHandler(),
-            logging.FileHandler(log_dir / 'step3_create_final_table.log')
+            logging.FileHandler(log_dir / 'step5_create_final_table.log')
         ]
     )
 
@@ -39,14 +39,14 @@ def setup_logging():
 def parse_arguments():
     """Parse command line arguments"""
     parser = argparse.ArgumentParser(
-        description="Create Final Author Table (Step 3) - Pandas Mode Only",
+        description="Create Final Author Table (Step 5) - Pandas Mode Only",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Uses optimized pandas-based batch processing.
 
 Examples:
-  python step3_create_final_table.py
-  python step3_create_final_table.py --verbose
+  python step5_create_final_table.py
+  python step5_create_final_table.py --verbose
         """
     )
 
@@ -79,11 +79,11 @@ def run_pandas_mode(db_manager) -> Dict:
 
 
 def main():
-    """Execute Step 3: Create Final Author Table"""
+    """Execute Step 5: Create Final Author Table"""
 
     args = parse_arguments()
 
-    print("Step 3: Creating Final Target Table - Pandas Mode")
+    print("Step 5: Creating Final Target Table - Pandas Mode")
     print("=" * 50)
     print("Using pandas-optimized batch processing with minimal database queries")
     print("=" * 50)
@@ -152,7 +152,7 @@ def main():
 
     except Exception as e:
         print(f"Critical error: {e}")
-        logging.getLogger(__name__).error(f"Step 3 failed: {e}", exc_info=True)
+        logging.getLogger(__name__).error(f"Step 5 failed: {e}", exc_info=True)
         return 1
 
 

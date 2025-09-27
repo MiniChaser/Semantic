@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Author Processing Step 2.6: Batch Enrich Author Profiles with S2 Author API
+Author Processing Step 2: Batch Enrich Author Profiles with S2 Author API
 High-performance batch processing version that queries up to 1000 S2 author IDs per API call
 Achieves significant performance improvements over individual queries
 """
@@ -34,7 +34,7 @@ def setup_logging(verbose: bool = False):
         format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
         handlers=[
             logging.StreamHandler(),
-            logging.FileHandler(log_dir / 'step2_6_batch_s2_author_enrichment.log')
+            logging.FileHandler(log_dir / 'step2_create_s2_author_profiles.log')
         ]
     )
 
@@ -42,7 +42,7 @@ def setup_logging(verbose: bool = False):
 def parse_arguments():
     """Parse command line arguments"""
     parser = argparse.ArgumentParser(
-        description="Batch Enrich Author Profiles with S2 Author API (Step 2.6)",
+        description="Batch Enrich Author Profiles with S2 Author API (Step 2)",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Performance Benefits:
@@ -52,9 +52,9 @@ Performance Benefits:
   - Expected 95%+ reduction in API call overhead
 
 Examples:
-  python step2_6_batch_s2_author_enrichment.py
-  python step2_6_batch_s2_author_enrichment.py --limit 5000 --verbose
-  python step2_6_batch_s2_author_enrichment.py --api-key YOUR_API_KEY --force-individual
+  python step2_create_s2_author_profiles.py
+  python step2_create_s2_author_profiles.py --limit 5000 --verbose
+  python step2_create_s2_author_profiles.py --api-key YOUR_API_KEY --force-individual
         """
     )
 
@@ -110,10 +110,10 @@ def display_performance_comparison():
 
 
 def main():
-    """Execute Step 2.6: Batch Enrich Author Profiles with S2 Author API"""
+    """Execute Step 2: Batch Enrich Author Profiles with S2 Author API"""
     args = parse_arguments()
 
-    print("Step 2.6: Batch Enriching Author Profiles with S2 Author API")
+    print("Step 2: Batch Enriching Author Profiles with S2 Author API")
     print("=" * 70)
     print("BATCH PROCESSING MODE - High Performance S2 Author Enrichment")
     print("=" * 70)
@@ -230,7 +230,7 @@ def main():
 
     except Exception as e:
         print(f"Critical error: {e}")
-        logging.getLogger(__name__).error(f"Step 2.6 failed: {e}", exc_info=True)
+        logging.getLogger(__name__).error(f"Step 2 failed: {e}", exc_info=True)
         return 1
 
 

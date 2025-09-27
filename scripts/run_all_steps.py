@@ -6,10 +6,11 @@ All steps run with pandas mode for optimal database interaction and processing s
 
 Processing Steps:
 1. Create Authorships Table (from enriched papers)
-2. Create Author Profiles Table (basic statistics)
-2.5. Enrich with S2 Author API (homepage, paper count, citation count, h-index)
-3. Create Final Author Table (comprehensive metrics)
-4. Generate Reports (analysis and validation)
+2. Create S2 Author Profiles (batch API enrichment)
+3. Create Author Profiles Table (basic statistics)
+4. Enrich with S2 Author API (sync with cached data)
+5. Create Final Author Table (comprehensive metrics)
+6. Generate Reports (analysis and validation)
 """
 
 import sys
@@ -71,10 +72,11 @@ def main():
     # Define all processing steps
     steps = [
         ("scripts/step1_create_authorships.py", "Step 1: Create Authorships Table"),
-        ("scripts/step2_create_author_profiles.py", "Step 2: Create Author Profiles Table"),
-        ("scripts/step2_5_enrich_author_profiles_with_s2.py", "Step 2.5: Enrich with S2 Author API"),
-        ("scripts/step3_create_final_table.py", "Step 3: Create Final Author Table"),
-        ("scripts/step4_generate_reports.py", "Step 4: Generate Reports")
+        ("scripts/step2_create_s2_author_profiles.py", "Step 2: Create S2 Author Profiles"),
+        ("scripts/step3_create_author_profiles.py", "Step 3: Create Author Profiles Table"),
+        ("scripts/step4_enrich_author_profiles_with_s2.py", "Step 4: Enrich with S2 Author API"),
+        ("scripts/step5_create_final_table.py", "Step 5: Create Final Author Table"),
+        ("scripts/step6_generate_reports.py", "Step 6: Generate Reports")
     ]
 
     successful_steps = 0
@@ -130,7 +132,7 @@ def main():
             print(f"  {status} {step_name}: {time_str}")
 
     # Performance benefits note
-    if successful_steps >= 4:  # If steps 1-2.5 completed
+    if successful_steps >= 4:  # If steps 1-4 completed
         print(f"\n🐼 Pandas Optimization Benefits:")
         print("  • Database queries reduced from thousands to 3-5 per step")
         print("  • Complete DBLP author coverage (100% data integrity)")
