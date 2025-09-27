@@ -13,6 +13,7 @@ from typing import Dict, List, Optional
 
 from ...database.connection import DatabaseManager
 from .author_disambiguation_service import AuthorMatcher
+from ..s2_service.s2_service import SemanticScholarAPI
 
 
 logger = logging.getLogger(__name__)
@@ -28,9 +29,12 @@ class AuthorProfilePandasService:
     3. Batch inserting results back to database
     """
 
-    def __init__(self, db_manager: DatabaseManager):
+    def __init__(self, db_manager: DatabaseManager, api_key: Optional[str] = None):
         self.db_manager = db_manager
         self.matcher = AuthorMatcher()
+
+        # Initialize S2 API for author enrichment
+        self.s2_api = SemanticScholarAPI(api_key)
 
         # Data containers for efficient processing
         self.authorships_df: Optional[pd.DataFrame] = None
@@ -573,3 +577,263 @@ class AuthorProfilePandasService:
         }
 
         return stats
+
+    def enrich_with_s2_author_api(self, limit: int = None) -> Dict:
+        """
+        Enrich author profiles with S2 Author API data
+
+        Args:
+            limit: Maximum number of authors to process (for testing)
+
+        Returns:
+            Statistics about the enrichment process
+        """
+        try:
+            logger.info("Starting S2 Author API enrichment...")
+
+            # Get authors that need S2 enrichment
+            query = """
+                SELECT id, dblp_author_name, s2_author_id, s2_author_name,
+                       homepage, s2_affiliations, s2_paper_count, s2_citation_count, s2_h_index,
+                       data_completeness_score
+                FROM author_profiles
+                WHERE s2_author_id IS NOT NULL
+                  AND s2_author_id != ''
+                  AND (homepage IS NULL
+                       OR s2_affiliations IS NULL
+                       OR s2_paper_count IS NULL
+                       OR s2_citation_count IS NULL
+                       OR s2_h_index IS NULL)
+            """
+
+            if limit:
+                query += f" LIMIT {limit}"
+
+            authors_needing_enrichment = self.db_manager.fetch_all(query)
+
+            if not authors_needing_enrichment:
+                logger.info("No authors need S2 API enrichment")
+                return {
+                    'total_authors_processed': 0,
+                    'authors_enriched': 0,
+                    'api_calls_made': 0,
+                    'errors': 0
+                }
+
+            logger.info(f"Found {len(authors_needing_enrichment)} authors needing S2 enrichment")
+
+            # Statistics tracking
+            stats = {
+                'total_authors_processed': 0,
+                'authors_enriched': 0,
+                'api_calls_made': 0,
+                'errors': 0,
+                'total_s2_ids_queried': 0,
+                'successful_s2_ids': 0
+            }
+
+            # Process each author
+            for author_record in authors_needing_enrichment:
+                try:
+                    enrichment_result = self._enrich_single_author(author_record)
+
+                    # Update statistics
+                    stats['total_authors_processed'] += 1
+                    if enrichment_result['updated']:
+                        stats['authors_enriched'] += 1
+                    stats['api_calls_made'] += enrichment_result['api_calls']
+                    stats['total_s2_ids_queried'] += enrichment_result['ids_queried']
+                    stats['successful_s2_ids'] += enrichment_result['ids_successful']
+
+                    # Progress logging
+                    if stats['total_authors_processed'] % 10 == 0:
+                        logger.info(f"Processed {stats['total_authors_processed']}/{len(authors_needing_enrichment)} authors")
+
+                except Exception as e:
+                    logger.error(f"Error processing author {author_record['dblp_author_name']}: {e}")
+                    stats['errors'] += 1
+                    continue
+
+            logger.info(f"S2 Author API enrichment completed. Enriched {stats['authors_enriched']} authors.")
+            return stats
+
+        except Exception as e:
+            logger.error(f"S2 Author API enrichment failed: {e}")
+            return {'error': str(e)}
+
+    def _enrich_single_author(self, author_record: Dict) -> Dict:
+        """
+        Enrich a single author record with S2 Author API data
+
+        Returns:
+            Dictionary with enrichment statistics
+        """
+        result = {
+            'updated': False,
+            'api_calls': 0,
+            'ids_queried': 0,
+            'ids_successful': 0
+        }
+
+        # Parse S2 author IDs (comma-separated)
+        s2_ids_str = author_record['s2_author_id']
+        s2_ids = [id.strip() for id in s2_ids_str.split(',') if id.strip()]
+
+        if not s2_ids:
+            return result
+
+        result['ids_queried'] = len(s2_ids)
+
+        # Fetch author data from S2 API
+        if len(s2_ids) == 1:
+            # Single ID - use individual API call
+            author_data = self.s2_api.get_author_by_id(s2_ids[0])
+            authors_data = [author_data] if author_data else []
+            result['api_calls'] = 1
+        else:
+            # Multiple IDs - use batch API call
+            authors_data = self.s2_api.batch_get_authors(s2_ids)
+            result['api_calls'] = 1
+
+        # Filter successful responses
+        valid_authors = [data for data in authors_data if data is not None]
+        result['ids_successful'] = len(valid_authors)
+
+        if not valid_authors:
+            logger.warning(f"No valid S2 data found for author {author_record['dblp_author_name']}")
+            return result
+
+        # Aggregate data from multiple S2 author records
+        aggregated_data = self._aggregate_s2_author_data(valid_authors)
+
+        # Update database record
+        update_success = self._update_author_record(author_record['id'], aggregated_data)
+        result['updated'] = update_success
+
+        return result
+
+    def _aggregate_s2_author_data(self, authors_data: List[Dict]) -> Dict:
+        """
+        Aggregate S2 author data from multiple author records
+
+        Args:
+            authors_data: List of S2 author API responses
+
+        Returns:
+            Aggregated data dictionary
+        """
+        if not authors_data:
+            return {}
+
+        # Collect values for aggregation
+        homepages = []
+        affiliations = []
+        paper_counts = []
+        citation_counts = []
+        h_indices = []
+
+        for author in authors_data:
+            # Homepage (URL) - collect for deduplication
+            url = author.get('url')
+            if url and url.strip():
+                homepages.append(url.strip())
+
+            # Affiliations - collect for deduplication
+            author_affiliations = author.get('affiliations')
+            if author_affiliations and isinstance(author_affiliations, list):
+                for affiliation in author_affiliations:
+                    if affiliation and affiliation.strip():
+                        affiliations.append(affiliation.strip())
+
+            # Paper count - collect for sum
+            paper_count = author.get('paperCount')
+            if paper_count is not None:
+                paper_counts.append(int(paper_count))
+
+            # Citation count - collect for sum
+            citation_count = author.get('citationCount')
+            if citation_count is not None:
+                citation_counts.append(int(citation_count))
+
+            # H-index - collect for max
+            h_index = author.get('hIndex')
+            if h_index is not None:
+                h_indices.append(int(h_index))
+
+        # Aggregate the data
+        aggregated = {}
+
+        # Homepage: comma-separated, deduplicated
+        if homepages:
+            unique_homepages = list(dict.fromkeys(homepages))  # Preserve order, remove duplicates
+            aggregated['homepage'] = ','.join(unique_homepages)
+
+        # Affiliations: comma-separated, deduplicated
+        if affiliations:
+            unique_affiliations = list(dict.fromkeys(affiliations))  # Preserve order, remove duplicates
+            aggregated['s2_affiliations'] = ','.join(unique_affiliations)
+
+        # Paper count: sum
+        if paper_counts:
+            aggregated['s2_paper_count'] = sum(paper_counts)
+
+        # Citation count: sum
+        if citation_counts:
+            aggregated['s2_citation_count'] = sum(citation_counts)
+
+        # H-index: maximum
+        if h_indices:
+            aggregated['s2_h_index'] = max(h_indices)
+
+        return aggregated
+
+    def _update_author_record(self, author_id: int, s2_data: Dict) -> bool:
+        """
+        Update author record in database with S2 data
+
+        Args:
+            author_id: Author profile ID
+            s2_data: Aggregated S2 data
+
+        Returns:
+            True if successful, False otherwise
+        """
+        if not s2_data:
+            return False
+
+        try:
+            # Build SET clause for UPDATE
+            set_clauses = []
+            params = []
+
+            for field, value in s2_data.items():
+                set_clauses.append(f"{field} = %s")
+                params.append(value)
+
+            if not set_clauses:
+                return False
+
+            # Add updated timestamp and recalculate completeness score
+            set_clauses.append("updated_at = CURRENT_TIMESTAMP")
+
+            # Build final query
+            update_query = f"""
+                UPDATE author_profiles
+                SET {', '.join(set_clauses)}
+                WHERE id = %s
+            """
+            params.append(author_id)
+
+            # Execute update
+            result = self.db_manager.execute_query(update_query, params)
+
+            if result:
+                logger.debug(f"Successfully updated author {author_id} with S2 data: {s2_data}")
+                return True
+            else:
+                logger.error(f"Failed to update author {author_id}")
+                return False
+
+        except Exception as e:
+            logger.error(f"Error updating author {author_id}: {e}")
+            return False

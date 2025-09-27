@@ -3,6 +3,13 @@
 Author Processing - Run All Steps
 Executes all Phase 1 steps sequentially using pandas optimization for maximum performance.
 All steps run with pandas mode for optimal database interaction and processing speed.
+
+Processing Steps:
+1. Create Authorships Table (from enriched papers)
+2. Create Author Profiles Table (basic statistics)
+2.5. Enrich with S2 Author API (homepage, paper count, citation count, h-index)
+3. Create Final Author Table (comprehensive metrics)
+4. Generate Reports (analysis and validation)
 """
 
 import sys
@@ -58,12 +65,14 @@ def main():
     print("=" * 80)
     print(f"⏰ Started at: {overall_start_time.strftime('%Y-%m-%d %H:%M:%S')}")
     print("🐼 All steps use pandas mode for maximum performance")
+    print("🔗 Includes S2 Author API enrichment for enhanced data completeness")
     print()
 
     # Define all processing steps
     steps = [
         ("scripts/step1_create_authorships.py", "Step 1: Create Authorships Table"),
         ("scripts/step2_create_author_profiles.py", "Step 2: Create Author Profiles Table"),
+        ("scripts/step2_5_enrich_author_profiles_with_s2.py", "Step 2.5: Enrich with S2 Author API"),
         ("scripts/step3_create_final_table.py", "Step 3: Create Final Author Table"),
         ("scripts/step4_generate_reports.py", "Step 4: Generate Reports")
     ]
@@ -121,12 +130,13 @@ def main():
             print(f"  {status} {step_name}: {time_str}")
 
     # Performance benefits note
-    if successful_steps >= 3:  # If steps 1-3 completed
+    if successful_steps >= 4:  # If steps 1-2.5 completed
         print(f"\n🐼 Pandas Optimization Benefits:")
         print("  • Database queries reduced from thousands to 3-5 per step")
         print("  • Complete DBLP author coverage (100% data integrity)")
         print("  • High-performance batch processing with vectorized operations")
         print("  • Efficient to_sql insertion replacing slow loop-based methods")
+        print("  • S2 Author API integration with intelligent batch processing")
 
     if successful_steps == len(steps):
         print("\n🎉 All steps completed successfully!")

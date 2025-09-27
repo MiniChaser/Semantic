@@ -130,6 +130,12 @@ class SemanticScholarAPI:
             'citationStyles', 'url', 'publicationVenue', 'publicationTypes',
             's2FieldsOfStudy', 'publicationDate'
         ]
+
+    def get_author_fields(self) -> List[str]:
+        """Get complete list of fields to request from S2 Author API"""
+        return [
+            'authorId', 'name', 'url', 'affiliations', 'paperCount', 'citationCount', 'hIndex'
+        ]
     
     def batch_get_papers(self, paper_ids: List[str]) -> List[Optional[Dict]]:
         """Batch retrieve papers by IDs"""
@@ -172,6 +178,40 @@ class SemanticScholarAPI:
         if result and result.get('data') and len(result['data']) > 0:
             return result['data'][0]
         return None
+
+    def get_author_by_id(self, author_id: str) -> Optional[Dict]:
+        """Get author by Semantic Scholar author ID"""
+        if not author_id or not author_id.strip():
+            return None
+
+        url = f"{self.base_url}/author/{author_id}"
+        params = {'fields': ','.join(self.get_author_fields())}
+
+        result = self._make_request(url, params=params)
+        return result
+
+    def batch_get_authors(self, author_ids: List[str]) -> List[Optional[Dict]]:
+        """Batch retrieve authors by IDs"""
+        if not author_ids:
+            return []
+
+        # Clean and filter author IDs
+        clean_ids = [aid.strip() for aid in author_ids if aid and aid.strip()]
+        if not clean_ids:
+            return []
+
+        # S2 Author API supports batch requests
+        url = f"{self.base_url}/author/batch"
+        params = {'fields': ','.join(self.get_author_fields())}
+        json_data = {"ids": clean_ids}
+
+        self.logger.info(f"Requesting batch authors: {len(clean_ids)} author IDs")
+        result = self._make_request(url, params=params, json_data=json_data)
+
+        if result:
+            return result
+        else:
+            return [None] * len(clean_ids)
 
 
 class S2DataParser:
