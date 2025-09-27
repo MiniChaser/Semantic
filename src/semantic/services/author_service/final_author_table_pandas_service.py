@@ -128,7 +128,7 @@ class FinalAuthorTablePandasService:
         try:
             logger.info("Loading all data for pandas processing...")
 
-            # Query 1: Load author data from author_profiles if available, otherwise from authorships
+            # Query 1: Load all enriched author data from author_profiles
             authors_query = """
             SELECT
                 p.s2_author_id,
@@ -140,7 +140,13 @@ class FinalAuthorTablePandasService:
                 p.first_author_count,
                 p.last_author_count,
                 p.first_author_ratio,
-                p.last_author_ratio
+                p.last_author_ratio,
+                p.homepage,
+                p.s2_affiliations,
+                p.s2_h_index,
+                p.s2_paper_count,
+                p.s2_citation_count,
+                p.google_scholar_id
             FROM author_profiles p
             WHERE p.dblp_author_name IS NOT NULL
             ORDER BY p.paper_count DESC
@@ -177,106 +183,9 @@ class FinalAuthorTablePandasService:
                 logger.info("Created author profiles from authorships data")
 
             self.authors_df = pd.DataFrame(authors_data)
-            logger.info(f"Loaded {len(self.authors_df)} author profiles")
+            logger.info(f"Loaded {len(self.authors_df)} author profiles with pre-calculated S2 metrics")
 
-            # Query 2: Load authorships data for all authors
-            # Get both S2 author IDs and DBLP author names to capture all data
-            authors_with_s2_ids = self.authors_df[
-                (self.authors_df['s2_author_id'].notna()) &
-                (self.authors_df['s2_author_id'] != '')
-            ]
-
-            authors_without_s2_ids = self.authors_df[
-                (self.authors_df['s2_author_id'].isna()) |
-                (self.authors_df['s2_author_id'] == '')
-            ]
-
-            logger.info(f"Authors with S2 IDs: {len(authors_with_s2_ids)}, without S2 IDs: {len(authors_without_s2_ids)}")
-
-            # Collect all unique S2 author IDs
-            all_author_ids = set()
-            if not authors_with_s2_ids.empty:
-                author_ids = list(authors_with_s2_ids['s2_author_id'])
-                for author_ids_str in author_ids:
-                    if author_ids_str and author_ids_str.strip():
-                        ids = [aid.strip() for aid in str(author_ids_str).split(',') if aid.strip()]
-                        all_author_ids.update(ids)
-
-            # Collect all DBLP author names (including those without S2 IDs)
-            all_dblp_names = list(self.authors_df['dblp_author_name'].dropna().unique())
-
-            logger.info(f"Found {len(all_author_ids)} unique S2 author IDs and {len(all_dblp_names)} DBLP author names")
-
-            # Load authorships using both S2 IDs and DBLP names for comprehensive coverage
-            authorships_parts = []
-
-            # Part 1: Load by S2 author IDs (for matched authors)
-            if all_author_ids:
-                s2_ids_list = list(all_author_ids)
-                placeholders = ','.join(['%s'] * len(s2_ids_list))
-                authorships_s2_query = f"""
-                SELECT
-                    a.s2_author_id,
-                    a.semantic_paper_id,
-                    a.dblp_author_name,
-                    a.authorship_order
-                FROM authorships a
-                WHERE a.s2_author_id IN ({placeholders})
-                AND a.s2_author_id IS NOT NULL
-                """
-
-                s2_authorships_data = self.db_manager.fetch_all(authorships_s2_query, tuple(s2_ids_list))
-                if s2_authorships_data:
-                    authorships_parts.append(pd.DataFrame(s2_authorships_data))
-                    logger.info(f"Loaded {len(s2_authorships_data)} authorship records by S2 IDs")
-
-            # Part 2: Load by DBLP names (to capture authors without S2 IDs)
-            if all_dblp_names:
-                dblp_placeholders = ','.join(['%s'] * len(all_dblp_names))
-                authorships_dblp_query = f"""
-                SELECT
-                    a.paper_id,
-                    a.s2_author_id,
-                    a.dblp_author_name,
-                    a.authorship_order
-                FROM authorships a
-                WHERE a.dblp_author_name IN ({dblp_placeholders})
-                AND a.dblp_author_name IS NOT NULL
-                AND a.s2_author_id IS NOT NULL
-                """
-
-                dblp_authorships_data = self.db_manager.fetch_all(authorships_dblp_query, tuple(all_dblp_names))
-                if dblp_authorships_data:
-                    authorships_parts.append(pd.DataFrame(dblp_authorships_data))
-                    logger.info(f"Loaded {len(dblp_authorships_data)} authorship records by DBLP names")
-
-            # Combine and deduplicate authorships data
-            if authorships_parts:
-                self.authorships_df = pd.concat(authorships_parts, ignore_index=True).drop_duplicates()
-                logger.info(f"Combined total: {len(self.authorships_df)} unique authorship records")
-
-                # Query 3: Load enriched papers data
-                paper_ids = list(self.authorships_df['semantic_paper_id'].dropna().unique())
-                if paper_ids:
-                    paper_placeholders = ','.join(['%s'] * len(paper_ids))
-                    papers_query = f"""
-                    SELECT
-                        e.semantic_citation_count,
-                        e.influentialcitationcount,
-                        e.id
-                    FROM enriched_papers e
-                    WHERE e.semantic_paper_id IN ({paper_placeholders})
-                    AND e.semantic_paper_id IS NOT NULL
-                    """
-
-                    papers_data = self.db_manager.fetch_all(papers_query, tuple(paper_ids))
-                    self.papers_df = pd.DataFrame(papers_data)
-                    logger.info(f"Loaded {len(self.papers_df)} enriched papers")
-                else:
-                    self.papers_df = pd.DataFrame()
-            else:
-                self.authorships_df = pd.DataFrame()
-                self.papers_df = pd.DataFrame()
+            # No need to load authorships and enriched_papers - using pre-calculated data from author_profiles
 
             return True
 
@@ -314,14 +223,8 @@ class FinalAuthorTablePandasService:
 
             logger.info(f"Processing {len(matched_authors)} matched authors and {len(unmatched_authors)} unmatched authors")
 
-            # Process ALL authors (both matched and unmatched) together for better coverage
-            if not self.authorships_df.empty:
-                # Create comprehensive dataset for calculations
-                author_paper_data = self._create_author_paper_dataset()
-                final_df = self._calculate_pandas_metrics(final_df, author_paper_data)
-            else:
-                logger.info("No authorship data available, using basic metrics for all authors")
-                final_df = self._add_default_metrics(final_df)
+            # Use pre-calculated metrics from author_profiles
+            final_df = self._use_precalculated_metrics(final_df)
 
             # Add additional fields
             final_df = self._prepare_final_author_records(final_df)
@@ -335,149 +238,24 @@ class FinalAuthorTablePandasService:
             logger.error(f"Error in pandas calculations: {e}")
             return pd.DataFrame()
 
-    def _create_author_paper_dataset(self) -> pd.DataFrame:
+    def _use_precalculated_metrics(self, final_df: pd.DataFrame) -> pd.DataFrame:
         """
-        Create a comprehensive dataset by merging authorships with papers
-        This enables vectorized calculations across all author-paper relationships
+        Use pre-calculated metrics from author_profiles instead of computing them
+        This replaces complex calculation logic with direct data usage
         """
-        # Merge authorships with papers
-        # Merge using authorships' paper_id and papers' id columns
-        author_papers = self.authorships_df.merge(
-            self.papers_df,
-            left_on='paper_id',
-            right_on='id',
-            how='left'
-        )
+        logger.info("Using pre-calculated S2 metrics from author_profiles...")
 
-        # Fill missing values
-        author_papers['semantic_citation_count'] = author_papers['semantic_citation_count'].fillna(0)
-        author_papers['influentialcitationcount'] = author_papers['influentialcitationcount'].fillna(0)
+        # Use S2 pre-calculated values directly
+        final_df['semantic_scholar_paper_count'] = final_df['s2_paper_count'].fillna(0)
+        final_df['semantic_scholar_citation_count'] = final_df['s2_citation_count'].fillna(0)
+        final_df['semantic_scholar_h_index'] = final_df['s2_h_index'].fillna(0)
 
-        return author_papers
+        # For total_influential_citations, use total_citations from author_profiles as fallback
+        final_df['total_influential_citations'] = final_df['total_citations'].fillna(0)
 
-    def _calculate_pandas_metrics(self, final_df: pd.DataFrame, author_paper_data: pd.DataFrame) -> pd.DataFrame:
-        """
-        Calculate all metrics using pandas groupby and vectorized operations
-        This replaces individual database queries with efficient batch processing
-        """
-        logger.info("Calculating metrics using pandas vectorized operations...")
-
-        # Calculate semantic_scholar_paper_count consistently for ALL authors by dblp_author_name
-        # Filter to only include rows where semantic_paper_id is not null (matched papers)
-        dblp_paper_counts = pd.DataFrame()
-        if not author_paper_data.empty:
-            matched_papers = author_paper_data[author_paper_data['semantic_paper_id'].notna()]
-            if not matched_papers.empty:
-                dblp_paper_counts = matched_papers.groupby('dblp_author_name').agg({
-                    'semantic_paper_id': 'count'  # Count all matched papers
-                }).reset_index()
-                dblp_paper_counts.columns = ['dblp_author_name', 'semantic_scholar_paper_count']
-
-        # Calculate total_influential_citations for ALL authors using DBLP names
-        dblp_influential_citations = pd.DataFrame()
-        if not author_paper_data.empty:
-            dblp_influential_citations = author_paper_data.groupby('dblp_author_name').agg({
-                'influentialcitationcount': 'sum',  # Total influential citations
-            }).reset_index()
-
-            dblp_influential_citations.columns = [
-                'dblp_author_name',
-                'total_influential_citations'
-            ]
-
-        # Calculate H-index for authors with S2 IDs (still use S2 IDs for H-index)
-        s2_h_index = pd.DataFrame()
-        if not author_paper_data.empty:
-            # Filter out null S2 author IDs for S2-based grouping
-            s2_data = author_paper_data[author_paper_data['s2_author_id'].notna() & (author_paper_data['s2_author_id'] != '')]
-            if not s2_data.empty:
-                # Calculate H-index for S2 authors
-                s2_h_index = s2_data.groupby('s2_author_id')['semantic_citation_count'].apply(
-                    lambda x: self._calculate_h_index_vectorized(x.tolist())
-                ).reset_index()
-                s2_h_index.columns = ['s2_author_id', 'semantic_scholar_h_index']
-
-        # Calculate H-index for authors without S2 IDs (using DBLP names)
-        dblp_h_index = pd.DataFrame()
-        dblp_data = author_paper_data[
-            author_paper_data['s2_author_id'].isna() |
-            (author_paper_data['s2_author_id'] == '')
-        ]
-        if not dblp_data.empty:
-            # Calculate H-index for DBLP-only authors
-            dblp_h_index = dblp_data.groupby('dblp_author_name')['semantic_citation_count'].apply(
-                lambda x: self._calculate_h_index_vectorized(x.tolist())
-            ).reset_index()
-            dblp_h_index.columns = ['dblp_author_name', 'semantic_scholar_h_index']
-
-        # Merge paper counts (for ALL authors by DBLP name)
-        if not dblp_paper_counts.empty:
-            final_df = final_df.merge(dblp_paper_counts, on='dblp_author_name', how='left')
-            logger.info(f"Applied DBLP-based paper counts to all authors")
-
-        # Merge total_influential_citations (calculated using DBLP names for ALL authors)
-        if not dblp_influential_citations.empty:
-            final_df = final_df.merge(dblp_influential_citations, on='dblp_author_name', how='left')
-            logger.info(f"Applied DBLP-based total_influential_citations to all authors")
-
-        # Merge S2 H-index for authors with S2 IDs
-        if not s2_h_index.empty:
-            final_df = final_df.merge(s2_h_index, on='s2_author_id', how='left')
-            logger.info(f"Applied S2-based H-index to {len(s2_h_index)} authors")
-
-        # Merge DBLP H-index for authors without S2 IDs
-        if not dblp_h_index.empty:
-            final_df = final_df.merge(dblp_h_index, on='dblp_author_name', how='left', suffixes=('', '_dblp'))
-
-            # For authors without S2 H-index, use DBLP H-index
-            mask_no_s2 = (final_df['s2_author_id'].isna()) | (final_df['s2_author_id'] == '')
-            final_df.loc[mask_no_s2, 'semantic_scholar_h_index'] = final_df.loc[mask_no_s2, 'semantic_scholar_h_index_dblp'].fillna(0)
-
-            # Drop temporary H-index columns
-            if 'semantic_scholar_h_index_dblp' in final_df.columns:
-                final_df = final_df.drop(columns=['semantic_scholar_h_index_dblp'])
-
-            logger.info(f"Applied DBLP-based H-index to authors without S2 IDs")
-
-        # Fill missing values for all authors
-        final_df['semantic_scholar_paper_count'] = final_df['semantic_scholar_paper_count'].fillna(0)
-
-        # Use total_citations from author_profiles for semantic_scholar_citation_count
-        final_df['semantic_scholar_citation_count'] = final_df['total_citations'].fillna(0)
-        final_df['total_influential_citations'] = final_df['total_influential_citations'].fillna(0)
-        final_df['semantic_scholar_h_index'] = final_df['semantic_scholar_h_index'].fillna(0)
-
-        logger.info(f"Calculation completed for {len(final_df)} authors")
+        logger.info(f"Applied pre-calculated metrics to {len(final_df)} authors")
         return final_df
 
-    def _calculate_h_index_vectorized(self, citations: List[int]) -> int:
-        """
-        Calculate H-index from a list of citation counts
-        Vectorized version of the H-index calculation
-        """
-        if not citations:
-            return 0
-
-        # Sort citations in descending order
-        sorted_citations = sorted([c for c in citations if c is not None and c > 0], reverse=True)
-
-        h_index = 0
-        for i, citation_count in enumerate(sorted_citations, 1):
-            if citation_count >= i:
-                h_index = i
-            else:
-                break
-
-        return h_index
-
-    def _add_default_metrics(self, final_df: pd.DataFrame) -> pd.DataFrame:
-        """Add default metric values when no authorship/papers data is available"""
-        final_df['semantic_scholar_paper_count'] = 0
-        # Use total_citations from author_profiles for semantic_scholar_citation_count
-        final_df['semantic_scholar_citation_count'] = final_df['total_citations'].fillna(0)
-        final_df['total_influential_citations'] = 0
-        final_df['semantic_scholar_h_index'] = 0
-        return final_df
 
     def _prepare_final_author_records(self, final_df: pd.DataFrame) -> pd.DataFrame:
         """
@@ -491,11 +269,11 @@ class FinalAuthorTablePandasService:
             self._extract_dblp_aliases_vectorized
         )
 
-        # Add all required fields
+        # Add all required fields using S2 enriched data
         final_df['dblp_author'] = final_df['dblp_author_name']
         final_df['note'] = ''  # Empty as specified
-        final_df['google_scholarid'] = None  # TODO: Google Scholar integration
-        final_df['semantic_scholar_affiliations'] = None  # TODO: S2 Author API needed
+        final_df['google_scholarid'] = final_df['google_scholar_id']  # Use S2 enriched data
+        final_df['semantic_scholar_affiliations'] = final_df['s2_affiliations']  # Use S2 enriched data
         final_df['csrankings_affiliation'] = None  # TODO: CSRankings integration
         final_df['dblp_top_paper_total_paper_captured'] = 0  # TODO: Top venue definition
         final_df['dblp_top_paper_last_author_count'] = 0  # TODO: Top venue definition
@@ -503,7 +281,7 @@ class FinalAuthorTablePandasService:
         final_df['name'] = final_df['dblp_author_name']
         final_df['name_snapshot'] = final_df['dblp_author_name']
         final_df['affiliations_snapshot'] = ''  # Empty as specified
-        final_df['homepage'] = None  # TODO: S2 Author API
+        final_df['homepage'] = final_df['homepage']  # Use S2 enriched data
 
 
         # Ensure proper data types
