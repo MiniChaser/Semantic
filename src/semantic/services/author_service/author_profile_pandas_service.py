@@ -143,7 +143,7 @@ class AuthorProfilePandasService:
                 a.authorship_order,
                 a.match_confidence,
                 a.match_method,
-                e.semantic_citation_count,
+                e.influentialcitationcount,
                 e.semantic_year,
                 e.dblp_authors,
                 e.semantic_authors
@@ -213,7 +213,7 @@ class AuthorProfilePandasService:
             try:
                 # Basic statistics
                 paper_count = len(author_data)
-                total_citations = author_data['semantic_citation_count'].fillna(0).sum()
+                total_citations = author_data['influentialcitationcount'].fillna(0).sum()
                 avg_citations = total_citations / paper_count if paper_count > 0 else 0
 
                 # Career information
