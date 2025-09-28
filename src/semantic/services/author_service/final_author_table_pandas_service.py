@@ -155,32 +155,8 @@ class FinalAuthorTablePandasService:
             authors_data = self.db_manager.fetch_all(authors_query)
 
             if not authors_data:
-                logger.warning("No author profiles data found, creating from authorships data")
-                # Fallback: Create author profiles from authorships table
-                authors_query_fallback = """
-                SELECT DISTINCT
-                    a.s2_author_id,
-                    a.dblp_author_name,
-                    a.s2_author_name,
-                    COUNT(DISTINCT a.semantic_paper_id) as paper_count,
-                    0 as total_citations,
-                    0 as career_length,
-                    COUNT(DISTINCT CASE WHEN a.authorship_order = 1 THEN a.semantic_paper_id END) as first_author_count,
-                    0 as last_author_count,
-                    0.0 as first_author_ratio,
-                    0.0 as last_author_ratio
-                FROM authorships a
-                WHERE a.dblp_author_name IS NOT NULL
-                GROUP BY a.s2_author_id, a.dblp_author_name, a.s2_author_name
-                ORDER BY paper_count DESC
-                """
-                authors_data = self.db_manager.fetch_all(authors_query_fallback)
-
-                if not authors_data:
-                    logger.error("No author data available from either author_profiles or authorships")
-                    return False
-
-                logger.info("Created author profiles from authorships data")
+                logger.error("No author profiles data found in database")
+                return False
 
             self.authors_df = pd.DataFrame(authors_data)
             logger.info(f"Loaded {len(self.authors_df)} author profiles with pre-calculated S2 metrics")
