@@ -38,7 +38,6 @@ class AuthorProfilePandasService:
 
         # Data containers for efficient processing
         self.authorships_df: Optional[pd.DataFrame] = None
-        self.papers_df: Optional[pd.DataFrame] = None
         self.author_profiles_df: Optional[pd.DataFrame] = None
 
     def create_author_profiles_table(self) -> bool:
@@ -146,7 +145,8 @@ class AuthorProfilePandasService:
                 e.influentialcitationcount,
                 e.semantic_year,
                 e.dblp_authors,
-                e.semantic_authors
+                e.semantic_authors,
+                MAX(a.authorship_order) OVER (PARTITION BY a.semantic_paper_id) as max_authorship_order
             FROM authorships a
             LEFT JOIN enriched_papers e ON a.paper_id = e.id
             ORDER BY a.dblp_author_name, a.semantic_paper_id, a.authorship_order
@@ -161,28 +161,6 @@ class AuthorProfilePandasService:
             # Convert to pandas DataFrame
             self.authorships_df = pd.DataFrame(authorships_data)
             logger.info(f"Loaded {len(self.authorships_df)} authorship records")
-
-            # Load paper-level max authorship order information
-            papers_max_order_query = """
-            SELECT
-                semantic_paper_id,
-                MAX(authorship_order) as max_authorship_order
-            FROM authorships
-            WHERE semantic_paper_id IS NOT NULL
-            GROUP BY semantic_paper_id
-            """
-
-            papers_max_order_data = self.db_manager.fetch_all(papers_max_order_query)
-            self.papers_df = pd.DataFrame(papers_max_order_data)
-            logger.info(f"Loaded max authorship order for {len(self.papers_df)} papers")
-
-            # Merge max order information into authorships
-            if not self.papers_df.empty:
-                self.authorships_df = self.authorships_df.merge(
-                    self.papers_df,
-                    on='semantic_paper_id',
-                    how='left'
-                )
 
             return True
 
@@ -566,7 +544,6 @@ class AuthorProfilePandasService:
             'processing_method': 'pandas_optimized',
             'data_loaded': self.authorships_df is not None,
             'authorships_records': len(self.authorships_df) if self.authorships_df is not None else 0,
-            'papers_with_max_order': len(self.papers_df) if self.papers_df is not None else 0,
             'profiles_calculated': len(self.author_profiles_df) if self.author_profiles_df is not None else 0
         }
 
