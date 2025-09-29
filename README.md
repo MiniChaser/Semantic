@@ -149,30 +149,6 @@ uv run python test/final_author_table/verify_table.py
 # View test results (generated in test/final_author_table/results/)
 ```
 
-### Unit Tests
-```bash
-# Install dev dependencies
-uv sync
-
-# Run all tests
-uv run pytest
-
-# Run with coverage
-uv run pytest --cov
-```
-
-### Code Quality
-```bash
-# Format code
-uv run black .
-
-# Sort imports
-uv run isort .
-
-# Lint code
-uv run flake8
-```
-
 ## 🔧 Troubleshooting
 
 ### Docker Issues
