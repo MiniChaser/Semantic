@@ -2,21 +2,15 @@
 -- Target: Verify first_author_count field is correct
 -- =====================================================
 
--- SQL: Calculate first_author_count from authorships and s2_author_profiles
-  SELECT
-      count(t1.key) as first_author_count
-  FROM
-      (
-          SELECT
-              key,
-              author,
-              ordinality AS position
-          FROM
-              dblp_papers,
-              jsonb_array_elements_text(authors) WITH ORDINALITY AS t(author, ordinality)
-      ) AS t1
-      LEFT JOIN dblp_papers t2 ON t2.key = t1.key
-  WHERE
-      t1.author = {dblp_author_name}
-      AND t1.position = 1;
-      
+-- SQL: Calculate first_author_count from enriched_papers and authorships
+
+SELECT
+    COUNT(a.id)
+FROM
+    authorships a
+    LEFT JOIN enriched_papers e ON a.semantic_paper_id = e.semantic_paper_id
+WHERE
+    a.dblp_author_name = {dblp_author_name}
+    AND s2_author_id IS NOT NULL
+    AND s2_author_id <> ''
+    AND a.s2_author_id = e.first_author_semantic_id;

@@ -4,7 +4,7 @@
 
 -- SQL: Calculate career_length from authorships and s2_author_profiles
 SELECT 
-    COALESCE(MAX(semantic_year) - MIN(semantic_year) + 1, 0) AS career_length
+    COALESCE(EXTRACT(YEAR FROM CURRENT_DATE)  - MIN(semantic_year) + 1, 0) AS career_length
 FROM enriched_papers 
 WHERE semantic_paper_id IN (
     SELECT semantic_paper_id 
