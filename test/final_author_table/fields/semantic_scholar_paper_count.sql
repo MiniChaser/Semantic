@@ -14,7 +14,7 @@ FROM
             authorships
         WHERE
             dblp_author_name = {dblp_author_name}
-            AND s2_author_id <> ''
+            AND s2_author_id <> '' AND s2_author_id is not null 
         GROUP BY
             dblp_author_name,
             s2_author_id
