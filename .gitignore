@@ -10,3 +10,4 @@ tests_results/
 *.pyc
 docs/
 *.xlsx
+*.json
