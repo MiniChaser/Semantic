@@ -137,6 +137,42 @@ The service runs these scripts sequentially:
 - Only processes new or updated records since the last successful run
 - Reduces API calls and improves performance on subsequent runs
 
+## 🧪 Testing
+
+### Data Verification Tests
+Run comprehensive verification tests for the final author table:
+
+```bash
+# Run table verification tests
+uv run python test/final_author_table/verify_table.py
+
+# View test results (generated in test/final_author_table/results/)
+```
+
+### Unit Tests
+```bash
+# Install dev dependencies
+uv sync
+
+# Run all tests
+uv run pytest
+
+# Run with coverage
+uv run pytest --cov
+```
+
+### Code Quality
+```bash
+# Format code
+uv run black .
+
+# Sort imports
+uv run isort .
+
+# Lint code
+uv run flake8
+```
+
 ## 🔧 Troubleshooting
 
 ### Docker Issues
