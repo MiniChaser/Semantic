@@ -139,18 +139,18 @@ class AuthorProfilePandasService:
                 a.dblp_author_name,
                 a.s2_author_name,
                 a.s2_author_id,
-                a.authorship_order,
                 a.match_confidence,
                 a.match_method,
                 e.influentialcitationcount,
                 e.semantic_year,
                 e.dblp_authors,
                 e.semantic_authors,
-                MAX(a.authorship_order) OVER (PARTITION BY a.semantic_paper_id) as max_authorship_order
+                e.first_author_semantic_id,
+                (e.semantic_authors->-1->>'authorId') as last_author_semantic_id,
+                e.all_authors_count
             FROM authorships a
             LEFT JOIN enriched_papers e ON a.paper_id = e.id
             WHERE a.s2_author_id IS NOT NULL and a.s2_author_id <> ''
-            ORDER BY a.dblp_author_name, a.semantic_paper_id, a.authorship_order
             """
 
             authorships_data = self.db_manager.fetch_all(authorships_query)
@@ -199,19 +199,20 @@ class AuthorProfilePandasService:
                 years = author_data['semantic_year'].dropna()
                 first_year = int(years.min()) if not years.empty else None
                 latest_year = int(years.max()) if not years.empty else None
-                career_length = (latest_year - first_year + 1) if first_year and latest_year else 0
+                current_year = datetime.now().year
+                career_length = (current_year - first_year + 1) if first_year else 0
 
-                # Authorship position analysis
-                first_author_count = len(author_data[author_data['authorship_order'] == 1])
+                # Authorship position analysis - use first_author_semantic_id from enriched_papers
+                first_author_count = len(author_data[
+                    (author_data['s2_author_id'] == author_data['first_author_semantic_id']) &
+                    author_data['first_author_semantic_id'].notna()
+                ])
 
-                # Calculate last author count more efficiently
-                # Find papers where this author is in the last position
-                last_author_count = 0
-                author_papers = author_data[author_data['semantic_paper_id'].notna()]
-
-                for _, row in author_papers.iterrows():
-                    if pd.notna(row['max_authorship_order']) and row['authorship_order'] == row['max_authorship_order']:
-                        last_author_count += 1
+                # Calculate last author count using semantic ID matching
+                last_author_count = len(author_data[
+                    (author_data['s2_author_id'] == author_data['last_author_semantic_id']) &
+                    author_data['last_author_semantic_id'].notna()
+                ])
 
                 middle_author_count = paper_count - first_author_count - last_author_count
 
