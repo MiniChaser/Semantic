@@ -35,21 +35,33 @@ def setup_logging():
     """Setup logging configuration"""
     log_dir = Path("logs")
     log_dir.mkdir(exist_ok=True)
-    
+
+    import sys
+
+    # Configure StreamHandler with UTF-8 encoding for Windows compatibility
+    stream_handler = logging.StreamHandler(sys.stdout)
+    stream_handler.setLevel(logging.INFO)
+
+    # Configure FileHandler with UTF-8 encoding
+    file_handler = logging.FileHandler(log_dir / 'step6_generate_reports.log', encoding='utf-8')
+    file_handler.setLevel(logging.INFO)
+
+    # Set formatter
+    formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+    stream_handler.setFormatter(formatter)
+    file_handler.setFormatter(formatter)
+
+    # Configure root logger
     logging.basicConfig(
         level=logging.INFO,
-        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-        handlers=[
-            logging.StreamHandler(),
-            logging.FileHandler(log_dir / 'step6_generate_reports.log')
-        ]
+        handlers=[stream_handler, file_handler]
     )
 
 
 def main():
     """Execute Step 6: Generate Reports"""
     
-    print("📊 Step 6: Generating Reports")
+    print("Step 6: Generating Reports")
     print("=" * 40)
     
     try:
@@ -60,8 +72,8 @@ def main():
         # Load configuration and initialize database
         config = AppConfig.from_env()
         db_manager = get_db_manager()
-        logger.info("✅ Database connection established")
-        print("✅ Database connection established")
+        logger.info("Database connection established")
+        print("Database connection established")
         
         # Initialize pandas services
         profile_service = AuthorProfilePandasService(db_manager)
@@ -125,18 +137,18 @@ def main():
         with open(phase1_report_path, 'w', encoding='utf-8') as f:
             json.dump(phase1_report_converted, f, ensure_ascii=False, indent=2)
         
-        print(f"✅ Phase 1 comprehensive report: {phase1_report_path}")
-        
+        print(f"Phase 1 comprehensive report: {phase1_report_path}")
+
         # Display summary
-        print(f"\n📁 Generated Reports:")
-        print(f"  📈 Phase 1 comprehensive report: {phase1_report_path}")
-        
-        print("\n✅ All reports generated successfully!")
+        print(f"\nGenerated Reports:")
+        print(f"  Phase 1 comprehensive report: {phase1_report_path}")
+
+        print("\nAll reports generated successfully!")
         
         return 0
         
     except Exception as e:
-        print(f"❌ Critical error: {e}")
+        print(f"Critical error: {e}")
         logging.getLogger(__name__).error(f"Step 6 failed: {e}", exc_info=True)
         return 1
 

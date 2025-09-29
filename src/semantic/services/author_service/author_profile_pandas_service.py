@@ -199,7 +199,8 @@ class AuthorProfilePandasService:
                 years = author_data['semantic_year'].dropna()
                 first_year = int(years.min()) if not years.empty else None
                 latest_year = int(years.max()) if not years.empty else None
-                career_length = (latest_year - first_year + 1) if first_year and latest_year else 0
+                current_year = datetime.now().year
+                career_length = (current_year - first_year + 1) if first_year else 0
 
                 # Authorship position analysis
                 first_author_count = len(author_data[author_data['authorship_order'] == 1])
