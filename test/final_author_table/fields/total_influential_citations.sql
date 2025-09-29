@@ -2,7 +2,7 @@
 -- Target: Verify total_influential_citations field is correct
 -- =====================================================
 
--- SQL: Calculate total_influential_citations from enriched_papers and s2_author_profiles
+-- SQL: Calculate total_influential_citations from enriched_papers  
 SELECT
     SUM(influentialCitationCount) as total_influential_citations
 FROM

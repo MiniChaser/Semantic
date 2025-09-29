@@ -10,5 +10,5 @@ WHERE semantic_paper_id IN (
     SELECT semantic_paper_id 
     FROM authorships   
     WHERE dblp_author_name = {dblp_author_name}
-      AND s2_author_id <> ''
+      AND s2_author_id <> ''  AND s2_author_id is not null 
 );
