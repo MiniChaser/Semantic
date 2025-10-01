@@ -17,6 +17,7 @@ dependencies = [
     "aiofiles>=24.1.0",
     "thefuzz>=0.22.1",
     "dotenv>=0.9.9",
+    "openpyxl",
 ]
 
 [tool.uv]
@@ -26,6 +27,10 @@ dev-dependencies = [
     "isort>=5.12.0", 
     "flake8>=6.0.0",
 ]
+
+[[tool.uv.index]]
+url = "https://pypi.tuna.tsinghua.edu.cn/simple"
+default = true
 
 [tool.black]
 line-length = 88
