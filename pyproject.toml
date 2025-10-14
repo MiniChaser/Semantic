@@ -28,10 +28,6 @@ dev-dependencies = [
     "flake8>=6.0.0",
 ]
 
-[[tool.uv.index]]
-url = "https://pypi.tuna.tsinghua.edu.cn/simple"
-default = true
-
 [tool.black]
 line-length = 88
 target-version = ['py39']
