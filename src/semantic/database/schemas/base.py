@@ -10,20 +10,24 @@ from .paper import PaperSchema
 from .processing import ProcessingMetaSchema
 from .scheduler import SchedulerSchema
 from .enriched_paper import EnrichedPaperSchema
+from .dataset_release import DatasetReleaseSchema
+from .dataset_paper import DatasetPaperSchema
 
 
 class DatabaseSchema:
     """Database schema definition and management"""
-    
+
     def __init__(self, db_manager: DatabaseManager):
         self.db_manager = db_manager
         self.logger = self._setup_logger()
-        
+
         # Initialize schema modules
         self.paper_schema = PaperSchema(db_manager)
         self.processing_schema = ProcessingMetaSchema(db_manager)
         self.scheduler_schema = SchedulerSchema(db_manager)
         self.enriched_paper_schema = EnrichedPaperSchema(db_manager)
+        self.dataset_release_schema = DatasetReleaseSchema(db_manager)
+        self.dataset_paper_schema = DatasetPaperSchema(db_manager)
     
     def _setup_logger(self) -> logging.Logger:
         """Setup logging for schema management"""
@@ -44,7 +48,7 @@ class DatabaseSchema:
         """Create all tables with their indexes and triggers"""
         try:
             self.logger.info("Starting database schema creation...")
-            
+
             # Create dblp_papers table
             if not self.paper_schema.create_table():
                 raise Exception("Failed to create dblp_papers table")
@@ -60,10 +64,18 @@ class DatabaseSchema:
             # Create scheduler jobs table
             if not self.scheduler_schema.create_table():
                 raise Exception("Failed to create scheduler jobs table")
-            
+
+            # Create dataset_release table
+            if not self.dataset_release_schema.create_table():
+                raise Exception("Failed to create dataset_release table")
+
+            # Create dataset_papers table
+            if not self.dataset_paper_schema.create_table():
+                raise Exception("Failed to create dataset_papers table")
+
             self.logger.info("Database schema creation completed successfully")
             return True
-            
+
         except Exception as e:
             self.logger.error(f"Failed to create database schema: {e}")
             return False
@@ -72,13 +84,15 @@ class DatabaseSchema:
         """Drop all tables (use with caution!)"""
         try:
             self.logger.warning("Dropping all tables...")
-            
+
             tables = [
                 'scheduler_jobs',
                 's2_processing_meta',
                 'enriched_papers',
                 'dblp_processing_meta',
-                'dblp_papers'
+                'dblp_papers',
+                'dataset_papers',
+                'dataset_release'
             ]
             
             for table in tables:
