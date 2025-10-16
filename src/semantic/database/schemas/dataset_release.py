@@ -42,7 +42,7 @@ class DatasetReleaseSchema:
             total_papers_processed INTEGER DEFAULT 0,
             papers_inserted INTEGER DEFAULT 0,
             papers_updated INTEGER DEFAULT 0,
-            processing_status VARCHAR(20) DEFAULT 'pending',
+            processing_status VARCHAR(50) DEFAULT 'pending',
             download_start_time TIMESTAMP,
             download_end_time TIMESTAMP,
             processing_start_time TIMESTAMP,
