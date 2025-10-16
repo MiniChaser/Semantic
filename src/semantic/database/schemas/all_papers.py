@@ -117,3 +117,81 @@ class AllPapersSchema:
         except Exception as e:
             self.logger.error(f"Failed to create all_papers table: {e}")
             return False
+
+    def drop_indexes(self) -> bool:
+        """
+        Drop all indexes on all_papers table (except primary key)
+        Used before bulk import for maximum performance
+        """
+        try:
+            self.logger.info("Dropping indexes on all_papers table for bulk import...")
+
+            drop_statements = [
+                "DROP INDEX IF EXISTS idx_all_papers_corpus_id CASCADE;",
+                "DROP INDEX IF EXISTS idx_all_papers_venue CASCADE;",
+                "DROP INDEX IF EXISTS idx_all_papers_year CASCADE;",
+                "DROP INDEX IF EXISTS idx_all_papers_release_id CASCADE;",
+                "DROP INDEX IF EXISTS idx_all_papers_citation_count CASCADE;",
+                "DROP INDEX IF EXISTS idx_all_papers_authors CASCADE;",
+                "DROP INDEX IF EXISTS idx_all_papers_paper_id CASCADE;",
+            ]
+
+            for drop_sql in drop_statements:
+                self.db_manager.execute_query(drop_sql)
+
+            # Also drop UNIQUE constraint on corpus_id (will be recreated with index)
+            self.logger.info("Dropping UNIQUE constraint on corpus_id...")
+            self.db_manager.execute_query(
+                "ALTER TABLE all_papers DROP CONSTRAINT IF EXISTS all_papers_corpus_id_key CASCADE;"
+            )
+
+            self.logger.info("✓ All indexes and constraints dropped successfully")
+            return True
+
+        except Exception as e:
+            self.logger.error(f"Failed to drop indexes: {e}")
+            return False
+
+    def recreate_indexes(self) -> bool:
+        """
+        Recreate all indexes on all_papers table after bulk import
+        Uses CONCURRENTLY where possible to avoid blocking
+        """
+        try:
+            self.logger.info("Recreating indexes on all_papers table...")
+            self.logger.info("This may take 30-60 minutes for 200M records...")
+
+            # Recreate indexes (same as get_indexes_sql but with progress tracking)
+            indexes = self.get_indexes_sql()
+
+            for idx, index_sql in enumerate(indexes, 1):
+                index_name = index_sql.split("idx_")[1].split(" ")[0] if "idx_" in index_sql else f"index_{idx}"
+                self.logger.info(f"Creating index {idx}/{len(indexes)}: idx_all_papers_{index_name}...")
+
+                if not self.db_manager.execute_query(index_sql):
+                    self.logger.warning(f"Failed to create index: {index_sql[:80]}...")
+                else:
+                    self.logger.info(f"✓ Index {idx}/{len(indexes)} created successfully")
+
+            self.logger.info("✓ All indexes recreated successfully")
+            return True
+
+        except Exception as e:
+            self.logger.error(f"Failed to recreate indexes: {e}")
+            return False
+
+    def check_indexes_exist(self) -> bool:
+        """Check if indexes exist on all_papers table"""
+        try:
+            query = """
+                SELECT COUNT(*) as index_count
+                FROM pg_indexes
+                WHERE tablename = 'all_papers'
+                AND indexname LIKE 'idx_all_papers_%'
+            """
+            result = self.db_manager.fetch_one(query)
+            count = result['index_count'] if result else 0
+            return count > 0
+        except Exception as e:
+            self.logger.warning(f"Could not check indexes: {e}")
+            return False

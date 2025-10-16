@@ -302,11 +302,12 @@ class S2AllPapersProcessor:
         insert_df['paper_id'] = insert_df['paper_id'].fillna('')
         insert_df['venue'] = insert_df['venue'].fillna('')
 
-        # Convert JSON fields to proper JSON strings for PostgreSQL COPY
+        # OPTIMIZATION: Convert JSON fields to proper JSON strings for PostgreSQL COPY
         # This is critical: Python list/dict -> JSON string (with double quotes)
+        # Using string constant '[]' instead of json.dumps([]) for better performance
         for json_field in ['authors', 'external_ids', 'fields_of_study', 'publication_types']:
             insert_df[json_field] = insert_df[json_field].apply(
-                lambda x: json.dumps(x) if x is not None else json.dumps([])
+                lambda x: json.dumps(x) if x is not None else '[]'
             )
 
         # Deduplication: if duplicate corpus_id in same batch, keep first
