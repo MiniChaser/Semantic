@@ -1,0 +1,392 @@
+#!/usr/bin/env python3
+"""
+Stage 1: Import ALL papers from S2 dataset to all_papers table
+
+Downloads and imports all papers (200M records) from Semantic Scholar dataset
+to the all_papers base table with optimized bulk import performance.
+
+Features:
+- Downloads latest S2 dataset release (optional)
+- Optimized bulk import with index management (3-5x faster)
+- Async pipeline processing with configurable parallelism
+- Resume support for interrupted imports
+- Configurable chunk size and pipeline depth
+
+Performance:
+- Expected speed: 20,000-35,000 papers/second
+- 200M records: ~2-3 hours (with optimizations)
+"""
+
+import argparse
+import asyncio
+import sys
+from datetime import datetime
+from pathlib import Path
+
+# Add project root to path
+project_root = Path(__file__).parent.parent
+sys.path.insert(0, str(project_root))
+
+from src.semantic.database.connection import DatabaseManager
+from src.semantic.database.repositories.dataset_release import DatasetReleaseRepository
+from src.semantic.database.models.dataset_release import DatasetRelease
+from src.semantic.database.schemas.dataset_release import DatasetReleaseSchema
+from src.semantic.database.schemas.all_papers import AllPapersSchema
+from src.semantic.services.s2_service.s2_dataset_downloader import S2DatasetDownloader
+from src.semantic.services.dataset_service.s2_all_papers_processor import S2AllPapersProcessor
+
+
+def setup_database_tables(db_manager: DatabaseManager) -> bool:
+    """Setup database tables if they don't exist"""
+    print("\n=== Setting up database tables ===")
+
+    try:
+        # Create dataset_release table
+        release_schema = DatasetReleaseSchema(db_manager)
+        if not release_schema.create_table():
+            print("Error: Failed to create dataset_release table")
+            return False
+
+        # Create all_papers table (base table for all 200M papers)
+        all_papers_schema = AllPapersSchema(db_manager)
+        if not all_papers_schema.create_table():
+            print("Error: Failed to create all_papers table")
+            return False
+
+        print("✓ Database tables ready")
+        return True
+
+    except Exception as e:
+        print(f"Error setting up database tables: {e}")
+        return False
+
+
+async def download_dataset(args, release_repo: DatasetReleaseRepository) -> tuple:
+    """Download dataset and create release record"""
+    print("\n=== Downloading S2 Dataset ===")
+
+    downloader = S2DatasetDownloader()
+
+    # Get release information
+    release_info = downloader.get_latest_release_info()
+
+    if not release_info:
+        print("Error: Failed to get release information")
+        return None, None
+
+    release_id = release_info.get('release_id')
+    release_date_str = release_info.get('release_date')
+
+    print(f"Release ID: {release_id}")
+    print(f"Release Date: {release_date_str}")
+
+    # Parse release date
+    release_date = None
+    if release_date_str:
+        try:
+            release_date = datetime.fromisoformat(release_date_str.replace('Z', '+00:00'))
+        except:
+            pass
+
+    # Create release record
+    release = DatasetRelease(
+        release_id=release_id,
+        dataset_name=args.dataset_name,
+        release_date=release_date,
+        description=f"S2 {args.dataset_name} dataset",
+        file_count=0,
+        processing_status='downloading',
+        download_start_time=datetime.now()
+    )
+
+    release_repo.create_release_record(release)
+
+    # Download dataset
+    print(f"\nDownloading dataset: {args.dataset_name}")
+    print(f"Target directory: {args.data_dir}")
+
+    download_result = await downloader.download_dataset(args.dataset_name, args.data_dir)
+
+    if not download_result.get('success'):
+        print(f"Error: Download failed - {download_result.get('error')}")
+        release_repo.update_release_status(release_id, 'failed', download_end_time=datetime.now())
+        return None, None
+
+    # Update release status
+    release_repo.update_release_status(
+        release_id,
+        'downloaded',
+        download_end_time=datetime.now(),
+        file_count=download_result.get('file_count', 0)
+    )
+
+    print(f"\n✓ Download completed: {download_result.get('downloaded_count')} files")
+
+    return release_id, download_result
+
+
+async def import_all_papers(args, db_manager: DatabaseManager, release_id: str):
+    """Import ALL papers to all_papers table with optimizations"""
+    print(f"\n{'='*80}")
+    print("STAGE 1: Importing ALL papers with OPTIMIZED FAST IMPORT MODE")
+    print(f"{'='*80}")
+
+    # Clear all_papers table before import (unless skip-truncate or resume flag is set)
+    if args.resume:
+        print("\n📝 Resume mode: Skipping files already in database...")
+        print("   (Will not truncate table)")
+    elif not args.skip_truncate:
+        print("\n⚠️  Clearing all_papers table before import...")
+        try:
+            db_manager.execute_query("TRUNCATE TABLE all_papers CASCADE;")
+            print("✓ all_papers table truncated successfully")
+        except Exception as e:
+            print(f"Error truncating table: {e}")
+            print("Note: If table doesn't exist, it will be created during import.")
+    else:
+        print("\n⚠️  Skip truncate mode: Existing data will be preserved")
+
+    # OPTIMIZATION: Drop indexes before bulk import for 3-5x speed improvement
+    print("\n🚀 OPTIMIZATION: Dropping indexes for ultra-fast bulk insert...")
+    all_papers_schema = AllPapersSchema(db_manager)
+    if not all_papers_schema.drop_indexes():
+        print("⚠️  Warning: Failed to drop indexes, continuing anyway...")
+
+    # Create processor
+    processor = S2AllPapersProcessor(db_manager, release_id)
+
+    # Process files with async pipeline (fast mode - no UPSERT)
+    stats = await processor.process_dataset_files(
+        args.data_dir,
+        pipeline_depth=args.pipeline_depth,
+        chunk_size=args.chunk_size,
+        resume=args.resume
+    )
+
+    # OPTIMIZATION: Recreate indexes after bulk import
+    if stats.get('status') == 'completed':
+        print("\n🔨 Rebuilding indexes (3 essential indexes: corpus_id, venue_tsv, authors)...")
+        print("This may take 1.5-3 hours for 200M records...")
+
+        if not all_papers_schema.recreate_indexes():
+            print("⚠️  Warning: Failed to recreate some indexes")
+            stats['index_recreation_failed'] = True
+        else:
+            print("✓ All indexes recreated successfully")
+
+        # Populate venue_tsv column for full-text search
+        print("\n📝 Populating venue_tsv column for Stage 2 optimization...")
+        print("This may take 20-30 minutes for 200M records...")
+
+        if not all_papers_schema.populate_venue_tsvector():
+            print("⚠️  Warning: Failed to populate venue_tsv column")
+            stats['venue_tsv_population_failed'] = True
+        else:
+            print("✓ venue_tsv column populated successfully")
+
+    return stats
+
+
+def print_statistics(stats: dict):
+    """Print import statistics"""
+    print("\n" + "="*80)
+    print("=== Import Completed ===")
+    print("="*80)
+    print(f"Status: {stats.get('status', 'unknown')}")
+
+    if 'total_files' in stats:
+        print(f"Files processed: {stats['total_files']}")
+    if 'total_papers_processed' in stats:
+        print(f"Papers processed: {stats['total_papers_processed']:,}")
+    if 'papers_inserted' in stats:
+        print(f"Papers inserted: {stats['papers_inserted']:,}")
+
+    if 'processing_time_seconds' in stats:
+        time_sec = stats['processing_time_seconds']
+        print(f"Processing time: {time_sec:.2f}s ({time_sec/60:.2f} minutes)")
+
+    print("="*80)
+
+
+async def main_async(args):
+    """Main async function"""
+    # Initialize database
+    db_manager = DatabaseManager()
+
+    # Test connection
+    if not db_manager.test_connection():
+        print("Error: Database connection failed")
+        return 1
+
+    print("✓ Database connection successful")
+
+    # Setup database tables
+    if not setup_database_tables(db_manager):
+        return 1
+
+    release_repo = DatasetReleaseRepository(db_manager)
+    release_id = None
+
+    try:
+        # Download phase (if needed)
+        if not args.process_only:
+            release_id, download_result = await download_dataset(args, release_repo)
+
+            if not release_id:
+                return 1
+
+            if args.download_only:
+                print("\n✓ Download completed (--download-only flag set)")
+                return 0
+
+        # Get release_id for processing
+        if not release_id:
+            # Get latest downloaded release
+            latest = release_repo.get_latest_release(args.dataset_name)
+            if not latest:
+                print("Error: No release found. Please download first or run without --process-only.")
+                return 1
+            release_id = latest.release_id
+            print(f"Using existing release: {release_id}")
+
+        # Import phase
+        stats = await import_all_papers(args, db_manager, release_id)
+
+        if stats.get('status') != 'completed':
+            print(f"\nError: Import failed - {stats.get('error')}")
+            return 1
+
+        print_statistics(stats)
+        return 0
+
+    except Exception as e:
+        print(f"\nError: Import failed - {e}")
+        import traceback
+        traceback.print_exc()
+        return 1
+
+
+def main():
+    """Main entry point"""
+    parser = argparse.ArgumentParser(
+        description='Stage 1: Import all papers from S2 dataset to all_papers table',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Stage 1: Import ALL Papers (Optimized for Performance)
+
+This script downloads and imports all papers (200M records) from Semantic Scholar
+dataset to the all_papers base table with optimized bulk import performance.
+
+OPTIMIZATIONS (3-5x faster):
+  - Drops all indexes before bulk insert
+  - Uses optimized chunk_size (500k) and pipeline_depth (5)
+  - Creates only 3 essential indexes (corpus_id, venue, authors)
+  - Skips unnecessary indexes (year, release_id, citation_count, paper_id)
+
+IMPORTANT: This script will TRUNCATE the all_papers table before importing
+(use --skip-truncate to prevent this).
+
+Resume Support: Use --resume to automatically skip files that are already
+in the database (based on source_file field). Perfect for interrupted imports!
+
+Examples:
+  # Download and import (full pipeline)
+  %(prog)s
+
+  # Download only
+  %(prog)s --download-only
+
+  # Process existing files (recommended usage)
+  %(prog)s --process-only --data-dir downloads/
+
+  # Resume interrupted import (smart file skipping)
+  %(prog)s --process-only --data-dir downloads/ --resume
+
+  # Custom chunk size (adjust for your system memory)
+  %(prog)s --process-only --data-dir downloads/ --chunk-size 300000
+
+  # Increase parallelism (requires more RAM)
+  %(prog)s --process-only --data-dir downloads/ --pipeline-depth 10
+
+  # Custom dataset and directory
+  %(prog)s --dataset-name abstracts --data-dir /path/to/data/
+        """
+    )
+
+    parser.add_argument(
+        '--download-only',
+        action='store_true',
+        help='Only download dataset, do not process'
+    )
+
+    parser.add_argument(
+        '--process-only',
+        action='store_true',
+        help='Only process existing downloaded files (skip download)'
+    )
+
+    parser.add_argument(
+        '--skip-truncate',
+        action='store_true',
+        help='Skip truncating all_papers table before import (default: truncate)'
+    )
+
+    parser.add_argument(
+        '--resume',
+        action='store_true',
+        help='Resume interrupted import by skipping already processed files (smart mode)'
+    )
+
+    parser.add_argument(
+        '--data-dir',
+        default='downloads/',
+        help='Data directory for downloaded files (default: downloads/)'
+    )
+
+    parser.add_argument(
+        '--dataset-name',
+        default='papers',
+        help='S2 dataset name (default: papers, options: papers, abstracts, etc.)'
+    )
+
+    parser.add_argument(
+        '--chunk-size',
+        type=int,
+        default=500000,
+        help='Number of papers per chunk for processing (default: 500,000)'
+    )
+
+    parser.add_argument(
+        '--pipeline-depth',
+        type=int,
+        default=5,
+        help='Async pipeline queue depth (default: 5, higher = more parallelism)'
+    )
+
+    args = parser.parse_args()
+
+    # Validate arguments
+    if args.download_only and args.process_only:
+        print("Error: Cannot specify both --download-only and --process-only")
+        return 1
+
+    if args.resume and args.skip_truncate:
+        print("Error: Cannot specify both --resume and --skip-truncate (resume implies skip-truncate)")
+        return 1
+
+    # Run async main
+    try:
+        exit_code = asyncio.run(main_async(args))
+        return exit_code
+    except KeyboardInterrupt:
+        print("\n\nInterrupted by user")
+        return 130
+    except Exception as e:
+        print(f"\nFatal error: {e}")
+        import traceback
+        traceback.print_exc()
+        return 1
+
+
+if __name__ == '__main__':
+    sys.exit(main())

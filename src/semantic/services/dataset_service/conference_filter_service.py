@@ -47,34 +47,36 @@ class ConferenceFilterService:
 
         return logger
 
-    def _build_conference_sql_conditions(self) -> List[str]:
+    def _build_tsquery_string(self) -> str:
         """
-        Build SQL WHERE conditions for conference matching
-        Returns list of SQL conditions that match conference patterns
+        Build tsquery string for full-text search using tsvector
+        Returns a tsquery-compatible string with all conference patterns joined by OR
         """
         conferences = self.conference_matcher.get_conferences()
         aliases = self.conference_matcher.aliases
 
-        conditions = []
+        patterns = []
 
-        # Add exact match conditions for each conference
+        # Add main conference patterns
         for conf in conferences:
-            conf_lower = conf.lower()
-            # Exact match or contained in venue
-            conditions.append(f"LOWER(venue) LIKE '%{conf_lower}%'")
+            patterns.append(conf.lower())
 
-        # Add alias conditions
+        # Add alias patterns
         for conf, alias_list in aliases.items():
             for alias in alias_list:
-                alias_lower = alias.lower()
-                conditions.append(f"LOWER(venue) LIKE '%{alias_lower}%'")
+                patterns.append(alias.lower())
 
-        return conditions
+        # Join with OR operator for tsquery
+        tsquery_string = ' | '.join(patterns)
+
+        self.logger.info(f"Built tsquery with {len(patterns)} conference patterns")
+
+        return tsquery_string
 
     def filter_and_populate_dataset_papers(self, batch_size: int = 10000) -> Dict:
         """
         Filter papers by conference from all_papers and populate dataset_papers
-        Uses SQL-based filtering with batching for memory efficiency
+        Uses optimized tsvector full-text search and cursor-based pagination
         """
         start_time = datetime.now()
 
@@ -83,21 +85,18 @@ class ConferenceFilterService:
         self.logger.info("="*80)
 
         try:
-            # Build SQL conditions
-            self.logger.info("Building conference matching conditions...")
-            sql_conditions = self._build_conference_sql_conditions()
-            where_clause = " OR ".join(sql_conditions)
+            # Build tsquery string for full-text search
+            self.logger.info("Building tsquery for full-text search...")
+            tsquery_string = self._build_tsquery_string()
 
-            self.logger.info(f"Built {len(sql_conditions)} matching conditions")
-
-            # Count total matching papers
-            self.logger.info("Counting matching papers in all_papers...")
-            count_query = f"""
+            # Count total matching papers using tsvector full-text search
+            self.logger.info("Counting matching papers in all_papers (using GIN index)...")
+            count_query = """
             SELECT COUNT(*) as total
             FROM all_papers
-            WHERE {where_clause}
+            WHERE venue_tsv @@ to_tsquery('simple', %s)
             """
-            result = self.db_manager.fetch_one(count_query)
+            result = self.db_manager.fetch_one(count_query, (tsquery_string,))
             total_papers = result['total'] if result else 0
 
             self.logger.info(f"Found {total_papers:,} papers matching conference criteria")
@@ -111,105 +110,76 @@ class ConferenceFilterService:
                     'total_updated': 0
                 }
 
-            # Process in batches using OFFSET/LIMIT
+            # Process in batches using cursor-based pagination
             total_batches = (total_papers + batch_size - 1) // batch_size
             self.logger.info(f"Processing in {total_batches} batches of {batch_size}")
+            self.logger.info("Using tsvector full-text search + cursor pagination for optimal performance")
 
-            for batch_num in tqdm(range(total_batches), desc="Filtering conferences"):
-                offset = batch_num * batch_size
+            last_corpus_id = 0
+            batch_num = 0
 
-                # Fetch batch of matching papers
-                batch_query = f"""
-                SELECT
-                    corpus_id,
-                    paper_id,
-                    external_ids,
-                    title,
-                    abstract,
-                    venue,
-                    year,
-                    citation_count,
-                    reference_count,
-                    influential_citation_count,
-                    authors,
-                    fields_of_study,
-                    publication_types,
-                    is_open_access,
-                    open_access_pdf,
-                    source_file,
-                    release_id
-                FROM all_papers
-                WHERE {where_clause}
-                ORDER BY corpus_id
-                LIMIT {batch_size} OFFSET {offset}
-                """
+            with tqdm(total=total_batches, desc="Filtering conferences") as pbar:
+                while True:
+                    # Fetch batch using cursor (WHERE corpus_id > last_id) and tsvector match
+                    batch_query = """
+                    SELECT
+                        corpus_id,
+                        paper_id,
+                        external_ids,
+                        title,
+                        abstract,
+                        venue,
+                        year,
+                        citation_count,
+                        reference_count,
+                        influential_citation_count,
+                        authors,
+                        fields_of_study,
+                        publication_types,
+                        is_open_access,
+                        open_access_pdf,
+                        source_file,
+                        release_id
+                    FROM all_papers
+                    WHERE venue_tsv @@ to_tsquery('simple', %s)
+                        AND corpus_id > %s
+                    ORDER BY corpus_id
+                    LIMIT %s
+                    """
 
-                papers = self.db_manager.fetch_all(batch_query)
+                    papers = self.db_manager.fetch_all(batch_query, (tsquery_string, last_corpus_id, batch_size))
 
-                if not papers:
-                    continue
+                    if not papers:
+                        break
 
-                # Process each paper to determine exact conference match
-                papers_to_insert = []
-                papers_to_update = []
+                    # Update cursor for next batch
+                    last_corpus_id = papers[-1]['corpus_id']
 
-                # Get existing corpus_ids in dataset_papers
-                corpus_ids = [p['corpus_id'] for p in papers]
-                placeholders = ','.join(['%s'] * len(corpus_ids))
-                existing_query = f"SELECT corpus_id FROM dataset_papers WHERE corpus_id IN ({placeholders})"
-                existing = self.db_manager.fetch_all(existing_query, tuple(corpus_ids))
-                existing_ids = {row['corpus_id'] for row in existing}
+                    # Determine conference_normalized for each paper
+                    papers_with_conf = []
+                    for paper in papers:
+                        venue = paper.get('venue', '')
+                        matched_conf = self.conference_matcher.match_conference(venue)
 
-                for paper in papers:
-                    venue = paper.get('venue', '')
-                    matched_conf = self.conference_matcher.match_conference(venue)
+                        # Add conference_normalized field
+                        paper_with_conf = dict(paper)
+                        paper_with_conf['conference_normalized'] = matched_conf
+                        papers_with_conf.append(paper_with_conf)
 
-                    if matched_conf:
-                        paper_data = {
-                            'corpus_id': paper['corpus_id'],
-                            'paper_id': paper.get('paper_id'),
-                            'external_ids': paper.get('external_ids'),
-                            'title': paper['title'],
-                            'abstract': paper.get('abstract'),
-                            'venue': paper.get('venue'),
-                            'year': paper.get('year'),
-                            'citation_count': paper.get('citation_count', 0),
-                            'reference_count': paper.get('reference_count', 0),
-                            'influential_citation_count': paper.get('influential_citation_count', 0),
-                            'authors': paper.get('authors'),
-                            'fields_of_study': paper.get('fields_of_study'),
-                            'publication_types': paper.get('publication_types'),
-                            'is_open_access': paper.get('is_open_access', False),
-                            'open_access_pdf': paper.get('open_access_pdf'),
-                            'conference_normalized': matched_conf,
-                            'source_file': paper.get('source_file'),
-                            'release_id': paper['release_id']
-                        }
+                    # Batch upsert papers using INSERT ON CONFLICT
+                    upserted = self._batch_upsert_papers(papers_with_conf)
+                    self.total_matched += len(papers_with_conf)
+                    self.total_inserted += upserted
 
-                        if paper['corpus_id'] in existing_ids:
-                            papers_to_update.append(paper_data)
-                        else:
-                            papers_to_insert.append(paper_data)
+                    batch_num += 1
+                    pbar.update(1)
 
-                # Batch insert new papers
-                if papers_to_insert:
-                    inserted = self._batch_insert_papers(papers_to_insert)
-                    self.total_inserted += inserted
-                    self.total_matched += inserted
-
-                # Batch update existing papers
-                if papers_to_update:
-                    updated = self._batch_update_papers(papers_to_update)
-                    self.total_updated += updated
-                    self.total_matched += updated
-
-                if (batch_num + 1) % 10 == 0 or batch_num == total_batches - 1:
-                    self.logger.info(
-                        f"Progress: Batch {batch_num + 1}/{total_batches}, "
-                        f"Matched={self.total_matched:,}, "
-                        f"Inserted={self.total_inserted:,}, "
-                        f"Updated={self.total_updated:,}"
-                    )
+                    if batch_num % 10 == 0 or batch_num == total_batches:
+                        self.logger.info(
+                            f"Progress: Batch {batch_num}/{total_batches}, "
+                            f"Matched={self.total_matched:,}, "
+                            f"Upserted={self.total_inserted:,}"
+                        )
 
             end_time = datetime.now()
             processing_time = (end_time - start_time).total_seconds()
@@ -217,8 +187,7 @@ class ConferenceFilterService:
             self.logger.info("="*80)
             self.logger.info("Conference filtering completed!")
             self.logger.info(f"Total papers matched: {self.total_matched:,}")
-            self.logger.info(f"Papers inserted (new): {self.total_inserted:,}")
-            self.logger.info(f"Papers updated (existing): {self.total_updated:,}")
+            self.logger.info(f"Papers upserted: {self.total_inserted:,}")
             self.logger.info(f"Processing time: {processing_time:.2f}s ({processing_time/60:.2f} minutes)")
             self.logger.info("="*80)
 
@@ -226,7 +195,7 @@ class ConferenceFilterService:
                 'status': 'completed',
                 'total_matched': self.total_matched,
                 'total_inserted': self.total_inserted,
-                'total_updated': self.total_updated,
+                'total_updated': 0,  # UPSERT doesn't distinguish
                 'processing_time_seconds': processing_time
             }
 
@@ -234,13 +203,16 @@ class ConferenceFilterService:
             self.logger.error(f"Conference filtering failed: {e}", exc_info=True)
             raise
 
-    def _batch_insert_papers(self, papers: List[Dict]) -> int:
-        """Batch insert papers into dataset_papers"""
+    def _batch_upsert_papers(self, papers: List[Dict]) -> int:
+        """
+        Batch upsert papers into dataset_papers using INSERT ON CONFLICT
+        This replaces the need for separate insert/update logic
+        """
         if not papers:
             return 0
 
         try:
-            insert_query = """
+            upsert_query = """
             INSERT INTO dataset_papers (
                 corpus_id, paper_id, external_ids, title, abstract, venue, year,
                 citation_count, reference_count, influential_citation_count,
@@ -250,71 +222,42 @@ class ConferenceFilterService:
             ) VALUES (
                 %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
             )
-            """
-
-            params_list = [
-                (
-                    p['corpus_id'], p['paper_id'], p['external_ids'], p['title'],
-                    p['abstract'], p['venue'], p['year'], p['citation_count'],
-                    p['reference_count'], p['influential_citation_count'],
-                    p['authors'], p['fields_of_study'], p['publication_types'],
-                    p['is_open_access'], p['open_access_pdf'], p['conference_normalized'],
-                    p['source_file'], p['release_id']
-                )
-                for p in papers
-            ]
-
-            self.db_manager.execute_batch_query(insert_query, params_list)
-            return len(papers)
-
-        except Exception as e:
-            self.logger.error(f"Batch insert failed: {e}")
-            raise
-
-    def _batch_update_papers(self, papers: List[Dict]) -> int:
-        """Batch update papers in dataset_papers"""
-        if not papers:
-            return 0
-
-        try:
-            update_query = """
-            UPDATE dataset_papers SET
-                paper_id = %s,
-                external_ids = %s,
-                title = %s,
-                abstract = %s,
-                venue = %s,
-                year = %s,
-                citation_count = %s,
-                reference_count = %s,
-                influential_citation_count = %s,
-                authors = %s,
-                fields_of_study = %s,
-                publication_types = %s,
-                is_open_access = %s,
-                open_access_pdf = %s,
-                conference_normalized = %s,
-                source_file = %s,
-                release_id = %s,
+            ON CONFLICT (corpus_id) DO UPDATE SET
+                paper_id = EXCLUDED.paper_id,
+                external_ids = EXCLUDED.external_ids,
+                title = EXCLUDED.title,
+                abstract = EXCLUDED.abstract,
+                venue = EXCLUDED.venue,
+                year = EXCLUDED.year,
+                citation_count = EXCLUDED.citation_count,
+                reference_count = EXCLUDED.reference_count,
+                influential_citation_count = EXCLUDED.influential_citation_count,
+                authors = EXCLUDED.authors,
+                fields_of_study = EXCLUDED.fields_of_study,
+                publication_types = EXCLUDED.publication_types,
+                is_open_access = EXCLUDED.is_open_access,
+                open_access_pdf = EXCLUDED.open_access_pdf,
+                conference_normalized = EXCLUDED.conference_normalized,
+                source_file = EXCLUDED.source_file,
+                release_id = EXCLUDED.release_id,
                 updated_at = CURRENT_TIMESTAMP
-            WHERE corpus_id = %s
             """
 
             params_list = [
                 (
-                    p['paper_id'], p['external_ids'], p['title'], p['abstract'],
-                    p['venue'], p['year'], p['citation_count'], p['reference_count'],
-                    p['influential_citation_count'], p['authors'], p['fields_of_study'],
-                    p['publication_types'], p['is_open_access'], p['open_access_pdf'],
-                    p['conference_normalized'], p['source_file'], p['release_id'],
-                    p['corpus_id']
+                    p['corpus_id'], p.get('paper_id'), p.get('external_ids'), p['title'],
+                    p.get('abstract'), p.get('venue'), p.get('year'), p.get('citation_count', 0),
+                    p.get('reference_count', 0), p.get('influential_citation_count', 0),
+                    p.get('authors'), p.get('fields_of_study'), p.get('publication_types'),
+                    p.get('is_open_access', False), p.get('open_access_pdf'),
+                    p.get('conference_normalized'), p.get('source_file'), p['release_id']
                 )
                 for p in papers
             ]
 
-            self.db_manager.execute_batch_query(update_query, params_list)
+            self.db_manager.execute_batch_query(upsert_query, params_list)
             return len(papers)
 
         except Exception as e:
-            self.logger.error(f"Batch update failed: {e}")
+            self.logger.error(f"Batch upsert failed: {e}")
             raise
