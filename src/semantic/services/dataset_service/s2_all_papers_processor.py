@@ -1,6 +1,7 @@
 """
 S2 All Papers Processor with Pandas and UPSERT Logic
-Processes S2 dataset files, imports ALL papers without filtering
+Processes S2 dataset files, imports papers with venue filtering
+Note: Papers with empty venue field will be skipped during import
 """
 
 import gzip
@@ -25,7 +26,8 @@ from ...database.repositories.dataset_release import DatasetReleaseRepository
 class S2AllPapersProcessor:
     """
     S2 All Papers Processor using pandas for efficient batch processing
-    Imports ALL papers from S2 dataset without any filtering
+    Imports papers from S2 dataset with venue filtering
+    Papers with empty venue field will be skipped
     Implements UPSERT logic to ensure only latest release_id is kept for each corpus_id
     """
 
@@ -56,8 +58,9 @@ class S2AllPapersProcessor:
 
     def parse_jsonl_gz_to_dataframe(self, file_path: str, chunk_size: int = 500000) -> Generator[pd.DataFrame, None, None]:
         """
-        Stream parse .jsonl.gz file, return DataFrames of ALL papers
+        Stream parse .jsonl.gz file, return DataFrames of papers with venue
         Yields DataFrame chunks every 500k papers (optimized for fast import)
+        Papers with empty venue will be skipped
         """
         papers_list = []
         line_count = 0
@@ -73,14 +76,14 @@ class S2AllPapersProcessor:
                     try:
                         paper_json = json.loads(line)
 
-                        # Import ALL papers (no filtering)
+                        # Parse paper with venue filtering
                         paper_dict = self._parse_s2_paper(
                             paper_json,
                             os.path.basename(file_path),
                             self.release_id
                         )
 
-                        if paper_dict:  # Only skip if parsing failed
+                        if paper_dict:  # Only add if paper has venue
                             papers_list.append(paper_dict)
 
                         # Yield chunk with configurable size
@@ -126,8 +129,15 @@ class S2AllPapersProcessor:
         # Get title
         title = json_obj.get('title')
 
-        # Skip if missing required fields
+        # Get venue
+        venue = json_obj.get('venue')
+
+        # Skip if missing required fields (corpus_id, title, or venue)
         if not corpus_id or not title:
+            return None
+
+        # Filter: Skip papers with empty venue
+        if not venue or (isinstance(venue, str) and venue.strip() == ''):
             return None
 
         # Get paperId (dataset uses lowercase: paperid)
