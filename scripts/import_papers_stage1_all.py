@@ -165,8 +165,8 @@ async def import_all_papers(args, db_manager: DatabaseManager, release_id: str):
 
     # OPTIMIZATION: Recreate indexes after bulk import
     if stats.get('status') == 'completed':
-        print("\n🔨 Rebuilding indexes (3 essential indexes: corpus_id, venue_normalized, authors)...")
-        print("This may take 1-2 hours for 200M records...")
+        print("\n🔨 Rebuilding indexes (2 essential indexes: corpus_id, venue_normalized)...")
+        print("This may take 20-30 minutes for 200M records...")
 
         if not all_papers_schema.recreate_indexes():
             print("⚠️  Warning: Failed to recreate some indexes")
@@ -275,8 +275,8 @@ dataset to the all_papers base table with optimized bulk import performance.
 OPTIMIZATIONS (3-5x faster):
   - Drops all indexes before bulk insert
   - Uses optimized chunk_size (500k) and pipeline_depth (5)
-  - Creates only 3 essential indexes (corpus_id, venue_normalized, authors)
-  - Skips unnecessary indexes (year, release_id, citation_count, paper_id)
+  - Creates only 2 essential indexes (corpus_id, venue_normalized)
+  - Skips unnecessary indexes (year, release_id, citation_count, paper_id, authors GIN)
 
 IMPORTANT: This script will TRUNCATE the all_papers table before importing
 (use --skip-truncate to prevent this).

@@ -62,18 +62,18 @@ class AllPapersSchema:
         """
         Get SQL statements for creating indexes on all_papers table
 
-        Only creates 3 essential indexes required by Stage 2 and Stage 3:
+        Only creates 2 essential indexes required by Stage 2:
         - corpus_id (UNIQUE): Required by Stage 2/3 for ORDER BY cursor pagination
         - venue_normalized (B-tree): Required by Stage 2 for conference filtering with IN queries
-        - authors (GIN): Required by Stage 3 for JSONB author matching
+
+        Note: authors GIN index removed due to extremely long build time (6+ hours for 200M records).
+              If Stage 3 requires author queries, consider adding optimized index later.
         """
         return [
             # Required by Stage 2/3: ORDER BY corpus_id (cursor pagination)
             "CREATE UNIQUE INDEX IF NOT EXISTS idx_all_papers_corpus_id ON all_papers(corpus_id);",
             # Required by Stage 2: Fast IN query on venue_normalized (B-tree, partial index for non-NULL)
             "CREATE INDEX IF NOT EXISTS idx_all_papers_venue_normalized ON all_papers(venue_normalized) WHERE venue_normalized IS NOT NULL;",
-            # Required by Stage 3: JSONB author matching
-            "CREATE INDEX IF NOT EXISTS idx_all_papers_authors ON all_papers USING GIN (authors);",
         ]
 
     def get_triggers_sql(self) -> List[str]:
@@ -142,11 +142,10 @@ class AllPapersSchema:
         try:
             self.logger.info("Dropping indexes on all_papers table for bulk import...")
 
-            # Drop only the 3 indexes we will recreate
+            # Drop only the 2 indexes we will recreate
             drop_statements = [
                 "DROP INDEX IF EXISTS idx_all_papers_corpus_id CASCADE;",
                 "DROP INDEX IF EXISTS idx_all_papers_venue_normalized CASCADE;",
-                "DROP INDEX IF EXISTS idx_all_papers_authors CASCADE;",
             ]
 
             total = len(drop_statements)
@@ -173,17 +172,16 @@ class AllPapersSchema:
 
     def recreate_indexes(self) -> bool:
         """
-        Recreate 3 essential indexes on all_papers table after bulk import
+        Recreate 2 essential indexes on all_papers table after bulk import
 
-        Creates only the indexes required by Stage 2 and Stage 3:
+        Creates only the indexes required by Stage 2:
         - corpus_id (UNIQUE)
         - venue_normalized (B-tree partial index)
-        - authors (GIN)
         """
         try:
             self.logger.info("Recreating indexes on all_papers table...")
-            self.logger.info("Creating 3 essential indexes (corpus_id, venue_normalized, authors)")
-            self.logger.info("This may take 1-2 hours for 200M records...")
+            self.logger.info("Creating 2 essential indexes (corpus_id, venue_normalized)")
+            self.logger.info("This may take 20-30 minutes for 200M records...")
 
             indexes = self.get_indexes_sql()
 
