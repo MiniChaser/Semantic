@@ -11,7 +11,7 @@ from tqdm import tqdm
 
 from ...database.connection import DatabaseManager
 from ...database.repositories.dataset_release import DatasetReleaseRepository
-from .conference_matcher import ConferenceMatcher
+from .database_conference_matcher import DatabaseConferenceMatcher
 
 
 class ConferenceFilterService:
@@ -23,7 +23,7 @@ class ConferenceFilterService:
     def __init__(self, db_manager: DatabaseManager, release_id: str):
         self.db_manager = db_manager
         self.release_id = release_id
-        self.conference_matcher = ConferenceMatcher()
+        self.conference_matcher = DatabaseConferenceMatcher(db_manager)
         self.release_repo = DatasetReleaseRepository(db_manager)
         self.logger = self._setup_logger()
 
@@ -47,36 +47,11 @@ class ConferenceFilterService:
 
         return logger
 
-    def _build_tsquery_string(self) -> str:
-        """
-        Build tsquery string for full-text search using tsvector
-        Returns a tsquery-compatible string with all conference patterns joined by OR
-        """
-        conferences = self.conference_matcher.get_conferences()
-        aliases = self.conference_matcher.aliases
-
-        patterns = []
-
-        # Add main conference patterns
-        for conf in conferences:
-            patterns.append(conf.lower())
-
-        # Add alias patterns
-        for conf, alias_list in aliases.items():
-            for alias in alias_list:
-                patterns.append(alias.lower())
-
-        # Join with OR operator for tsquery
-        tsquery_string = ' | '.join(patterns)
-
-        self.logger.info(f"Built tsquery with {len(patterns)} conference patterns")
-
-        return tsquery_string
 
     def filter_and_populate_dataset_papers(self, batch_size: int = 10000) -> Dict:
         """
         Filter papers by conference from all_papers and populate dataset_papers
-        Uses optimized tsvector full-text search and cursor-based pagination
+        Uses optimized venue_normalized B-tree index with IN queries and cursor-based pagination
         """
         start_time = datetime.now()
 
@@ -85,18 +60,28 @@ class ConferenceFilterService:
         self.logger.info("="*80)
 
         try:
-            # Build tsquery string for full-text search
-            self.logger.info("Building tsquery for full-text search...")
-            tsquery_string = self._build_tsquery_string()
+            # Get conference list from database
+            self.logger.info("Loading conferences from database...")
+            conferences = self.conference_matcher.get_conferences()
 
-            # Count total matching papers using tsvector full-text search
-            self.logger.info("Counting matching papers in all_papers (using GIN index)...")
-            count_query = """
+            if not conferences:
+                self.logger.error("No conferences found in database")
+                return {
+                    'status': 'failed',
+                    'error': 'No conferences found. Please run init_conferences_table.py first'
+                }
+
+            self.logger.info(f"Loaded {len(conferences)} conferences")
+
+            # Count total matching papers using venue_normalized B-tree index
+            self.logger.info("Counting matching papers in all_papers (using B-tree index)...")
+            placeholders = ','.join(['%s'] * len(conferences))
+            count_query = f"""
             SELECT COUNT(*) as total
             FROM all_papers
-            WHERE venue_tsv @@ to_tsquery('simple', %s)
+            WHERE venue_normalized IN ({placeholders})
             """
-            result = self.db_manager.fetch_one(count_query, (tsquery_string,))
+            result = self.db_manager.fetch_one(count_query, tuple(conferences))
             total_papers = result['total'] if result else 0
 
             self.logger.info(f"Found {total_papers:,} papers matching conference criteria")
@@ -113,15 +98,15 @@ class ConferenceFilterService:
             # Process in batches using cursor-based pagination
             total_batches = (total_papers + batch_size - 1) // batch_size
             self.logger.info(f"Processing in {total_batches} batches of {batch_size}")
-            self.logger.info("Using tsvector full-text search + cursor pagination for optimal performance")
+            self.logger.info("Using venue_normalized B-tree index + cursor pagination for optimal performance")
 
             last_corpus_id = 0
             batch_num = 0
 
             with tqdm(total=total_batches, desc="Filtering conferences") as pbar:
                 while True:
-                    # Fetch batch using cursor (WHERE corpus_id > last_id) and tsvector match
-                    batch_query = """
+                    # Fetch batch using cursor (WHERE corpus_id > last_id) and venue_normalized IN query
+                    batch_query = f"""
                     SELECT
                         corpus_id,
                         paper_id,
@@ -129,6 +114,7 @@ class ConferenceFilterService:
                         title,
                         abstract,
                         venue,
+                        venue_normalized,
                         year,
                         citation_count,
                         reference_count,
@@ -141,13 +127,15 @@ class ConferenceFilterService:
                         source_file,
                         release_id
                     FROM all_papers
-                    WHERE venue_tsv @@ to_tsquery('simple', %s)
+                    WHERE venue_normalized IN ({placeholders})
                         AND corpus_id > %s
                     ORDER BY corpus_id
                     LIMIT %s
                     """
 
-                    papers = self.db_manager.fetch_all(batch_query, (tsquery_string, last_corpus_id, batch_size))
+                    # Parameters: conferences tuple + last_corpus_id + batch_size
+                    params = tuple(conferences) + (last_corpus_id, batch_size)
+                    papers = self.db_manager.fetch_all(batch_query, params)
 
                     if not papers:
                         break
@@ -155,15 +143,12 @@ class ConferenceFilterService:
                     # Update cursor for next batch
                     last_corpus_id = papers[-1]['corpus_id']
 
-                    # Determine conference_normalized for each paper
+                    # venue_normalized is already set, use it directly as conference_normalized
                     papers_with_conf = []
                     for paper in papers:
-                        venue = paper.get('venue', '')
-                        matched_conf = self.conference_matcher.match_conference(venue)
-
-                        # Add conference_normalized field
                         paper_with_conf = dict(paper)
-                        paper_with_conf['conference_normalized'] = matched_conf
+                        # Use venue_normalized as conference_normalized (already standardized)
+                        paper_with_conf['conference_normalized'] = paper.get('venue_normalized')
                         papers_with_conf.append(paper_with_conf)
 
                     # Batch upsert papers using INSERT ON CONFLICT

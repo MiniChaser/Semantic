@@ -41,7 +41,7 @@ class AllPapersSchema:
             title TEXT NOT NULL,
             abstract TEXT,
             venue TEXT,
-            venue_tsv tsvector,
+            venue_normalized TEXT,
             year INTEGER,
             citation_count INTEGER DEFAULT 0,
             reference_count INTEGER DEFAULT 0,
@@ -64,14 +64,14 @@ class AllPapersSchema:
 
         Only creates 3 essential indexes required by Stage 2 and Stage 3:
         - corpus_id (UNIQUE): Required by Stage 2/3 for ORDER BY cursor pagination
-        - venue_tsv (GIN): Required by Stage 2 for full-text search on venue
+        - venue_normalized (B-tree): Required by Stage 2 for conference filtering with IN queries
         - authors (GIN): Required by Stage 3 for JSONB author matching
         """
         return [
             # Required by Stage 2/3: ORDER BY corpus_id (cursor pagination)
             "CREATE UNIQUE INDEX IF NOT EXISTS idx_all_papers_corpus_id ON all_papers(corpus_id);",
-            # Required by Stage 2: Full-text search on venue (replaces ineffective LIKE)
-            "CREATE INDEX IF NOT EXISTS idx_all_papers_venue_tsv ON all_papers USING GIN (venue_tsv);",
+            # Required by Stage 2: Fast IN query on venue_normalized (B-tree, partial index for non-NULL)
+            "CREATE INDEX IF NOT EXISTS idx_all_papers_venue_normalized ON all_papers(venue_normalized) WHERE venue_normalized IS NOT NULL;",
             # Required by Stage 3: JSONB author matching
             "CREATE INDEX IF NOT EXISTS idx_all_papers_authors ON all_papers USING GIN (authors);",
         ]
@@ -142,17 +142,11 @@ class AllPapersSchema:
         try:
             self.logger.info("Dropping indexes on all_papers table for bulk import...")
 
-            # Drop only the 3 indexes we will recreate (plus any legacy indexes if they exist)
+            # Drop only the 3 indexes we will recreate
             drop_statements = [
                 "DROP INDEX IF EXISTS idx_all_papers_corpus_id CASCADE;",
-                "DROP INDEX IF EXISTS idx_all_papers_venue_tsv CASCADE;",
+                "DROP INDEX IF EXISTS idx_all_papers_venue_normalized CASCADE;",
                 "DROP INDEX IF EXISTS idx_all_papers_authors CASCADE;",
-                # Legacy indexes (may exist from old schema, safe to drop)
-                "DROP INDEX IF EXISTS idx_all_papers_venue CASCADE;",
-                "DROP INDEX IF EXISTS idx_all_papers_year CASCADE;",
-                "DROP INDEX IF EXISTS idx_all_papers_release_id CASCADE;",
-                "DROP INDEX IF EXISTS idx_all_papers_citation_count CASCADE;",
-                "DROP INDEX IF EXISTS idx_all_papers_paper_id CASCADE;",
             ]
 
             total = len(drop_statements)
@@ -183,13 +177,13 @@ class AllPapersSchema:
 
         Creates only the indexes required by Stage 2 and Stage 3:
         - corpus_id (UNIQUE)
-        - venue_tsv (GIN for full-text search)
+        - venue_normalized (B-tree partial index)
         - authors (GIN)
         """
         try:
             self.logger.info("Recreating indexes on all_papers table...")
-            self.logger.info("Creating 3 essential indexes (corpus_id, venue_tsv, authors)")
-            self.logger.info("This may take 1.5-3 hours for 200M records...")
+            self.logger.info("Creating 3 essential indexes (corpus_id, venue_normalized, authors)")
+            self.logger.info("This may take 1-2 hours for 200M records...")
 
             indexes = self.get_indexes_sql()
 
@@ -223,29 +217,4 @@ class AllPapersSchema:
             return count > 0
         except Exception as e:
             self.logger.warning(f"Could not check indexes: {e}")
-            return False
-
-    def populate_venue_tsvector(self) -> bool:
-        """
-        Populate venue_tsv column with tsvector data
-        Should be called after bulk import is complete
-        """
-        try:
-            self.logger.info("Populating venue_tsv column with tsvector data...")
-            self.logger.info("This may take 20-30 minutes for 200M records...")
-
-            # Update all rows to populate venue_tsv
-            update_query = """
-            UPDATE all_papers
-            SET venue_tsv = to_tsvector('simple', COALESCE(venue, ''))
-            WHERE venue_tsv IS NULL
-            """
-
-            self.db_manager.execute_query(update_query)
-
-            self.logger.info("✓ venue_tsv data populated successfully")
-            return True
-
-        except Exception as e:
-            self.logger.error(f"Failed to populate venue_tsv: {e}")
             return False
