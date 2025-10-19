@@ -41,6 +41,9 @@ class S2AllPapersProcessor:
         self.total_processed = 0
         self.total_inserted = 0
 
+        # Load venue mapping table into memory for fast lookup
+        self.venue_mapping = self._load_venue_mapping()
+
     def _setup_logger(self) -> logging.Logger:
         """Setup logger"""
         logger = logging.getLogger(f'{__name__}.S2AllPapersProcessor')
@@ -55,6 +58,37 @@ class S2AllPapersProcessor:
             logger.addHandler(handler)
 
         return logger
+
+    def _load_venue_mapping(self) -> dict:
+        """
+        Load venue_mapping table into memory for O(1) lookup performance
+        Returns dict mapping venue_raw -> conference_name (e.g., 'CVPR 2020' -> 'CVPR')
+
+        Expected memory usage: ~10-20MB for 90K mappings
+        """
+        try:
+            query = "SELECT venue_raw, conference_name FROM venue_mapping"
+            results = self.db_manager.fetch_all(query)
+
+            if not results:
+                self.logger.warning(
+                    "venue_mapping table is empty or does not exist. "
+                    "venue_normalized will be NULL for all papers. "
+                    "Please run: uv run python scripts/build_venue_mapping.py"
+                )
+                return {}
+
+            mapping = {row['venue_raw']: row['conference_name'] for row in results}
+            self.logger.info(f"Loaded {len(mapping):,} venue mappings into memory (~{len(mapping)*100//1024}KB)")
+
+            return mapping
+
+        except Exception as e:
+            self.logger.warning(
+                f"Failed to load venue_mapping table: {e}. "
+                f"venue_normalized will be NULL for all papers."
+            )
+            return {}
 
     def parse_jsonl_gz_to_dataframe(self, file_path: str, chunk_size: int = 500000) -> Generator[pd.DataFrame, None, None]:
         """
@@ -174,12 +208,16 @@ class S2AllPapersProcessor:
         # Get publicationTypes (dataset uses lowercase: publicationtypes)
         pub_types = json_obj.get('publicationTypes') or json_obj.get('publicationtypes') or []
 
+        # Compute venue_normalized using in-memory mapping (O(1) lookup)
+        venue_normalized = self.venue_mapping.get(venue) if venue else None
+
         return {
             'corpus_id': corpus_id,
             'paper_id': paper_id,
             'title': title,
             'abstract': json_obj.get('abstract'),
             'venue': json_obj.get('venue'),
+            'venue_normalized': venue_normalized,  # Computed inline during import
             'year': json_obj.get('year'),
             'citation_count': citation_count,
             'reference_count': reference_count,
@@ -311,6 +349,8 @@ class S2AllPapersProcessor:
         insert_df['open_access_pdf'] = insert_df['open_access_pdf'].fillna('')
         insert_df['paper_id'] = insert_df['paper_id'].fillna('')
         insert_df['venue'] = insert_df['venue'].fillna('')
+        # venue_normalized can be NULL (not all venues have mappings)
+        # No fillna needed - PostgreSQL will handle NULL correctly
 
         # OPTIMIZATION: Convert JSON fields to proper JSON strings for PostgreSQL COPY
         # This is critical: Python list/dict -> JSON string (with double quotes)
