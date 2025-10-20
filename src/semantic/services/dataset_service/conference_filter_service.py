@@ -231,7 +231,7 @@ class ConferenceFilterService:
             params_list = [
                 (
                     p['corpus_id'], p.get('paper_id'), p.get('external_ids'), p['title'],
-                    p.get('abstract'), p.get('venue'), p.get('year'), p.get('citation_count', 0),
+                    p.get('abstract'), p.get('venue_normalized'), p.get('year'), p.get('citation_count', 0),
                     p.get('reference_count', 0), p.get('influential_citation_count', 0),
                     p.get('authors'), p.get('fields_of_study'), p.get('publication_types'),
                     p.get('is_open_access', False), p.get('open_access_pdf'),
