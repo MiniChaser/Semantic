@@ -42,13 +42,18 @@ from src.semantic.database.schemas.dataset_paper import DatasetPaperSchema
 from src.semantic.services.dataset_service.conference_filter_service import ConferenceFilterService
 
 
-def setup_database_tables(db_manager: DatabaseManager, drop_indexes: bool = True) -> bool:
+def setup_database_tables(db_manager: DatabaseManager, drop_indexes: bool = True, use_partitioning: bool = False) -> bool:
     """Setup database tables if they don't exist"""
     print("\n=== Setting up database tables ===")
 
     try:
         # Create dataset_papers table (conference papers)
-        paper_schema = DatasetPaperSchema(db_manager)
+        paper_schema = DatasetPaperSchema(db_manager, use_partitioning=use_partitioning)
+
+        if use_partitioning:
+            print("📊 Using PARTITIONED table (by year)")
+        else:
+            print("📋 Using standard (non-partitioned) table")
 
         # Check if table exists and has data
         count_query = "SELECT COUNT(*) as count FROM dataset_papers"
@@ -213,6 +218,9 @@ Examples:
   # Normal mode (recommended - with index optimization)
   %(prog)s
 
+  # Create partitioned table by year (for better query performance)
+  %(prog)s --use-partitioning
+
   # Adjust batch size
   %(prog)s --batch-size 20000
 
@@ -243,6 +251,12 @@ Examples:
         help='Keep indexes during insert (slower, but safer - same as original script)'
     )
 
+    parser.add_argument(
+        '--use-partitioning',
+        action='store_true',
+        help='Create partitioned table by year (34 partitions, for better query performance)'
+    )
+
     args = parser.parse_args()
 
     # Validate options
@@ -265,7 +279,7 @@ Examples:
 
     # Setup database tables
     drop_indexes = not args.keep_indexes
-    if not setup_database_tables(db_manager, drop_indexes=drop_indexes):
+    if not setup_database_tables(db_manager, drop_indexes=drop_indexes, use_partitioning=args.use_partitioning):
         return 1
 
     try:
