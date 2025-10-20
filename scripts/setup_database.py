@@ -11,7 +11,7 @@ import os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
 from semantic.database.connection import get_db_manager
-from semantic.database.schema import DatabaseSchema
+from semantic.database.schemas import DatabaseSchema
 
 def main():
     """Main function to setup database"""
