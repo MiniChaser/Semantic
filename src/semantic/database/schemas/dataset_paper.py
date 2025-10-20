@@ -187,17 +187,20 @@ class DatasetPaperSchema:
 
     def drop_indexes(self) -> bool:
         """
-        Drop all indexes on dataset_papers table (except primary key)
-        Used before bulk import for maximum performance
+        Drop non-essential indexes on dataset_papers table for bulk import performance
+
+        IMPORTANT: Keeps corpus_id UNIQUE constraint for ON CONFLICT to work!
+        Only drops the 6 secondary indexes that slow down inserts.
 
         WARNING: This will make queries very slow until indexes are recreated!
         """
         try:
-            self.logger.info("Dropping indexes on dataset_papers table for bulk import...")
+            self.logger.info("Dropping non-essential indexes on dataset_papers table for bulk import...")
+            self.logger.info("⚠️  Keeping corpus_id UNIQUE constraint (required for ON CONFLICT)")
 
-            # Drop all 7 indexes
+            # Drop only 6 secondary indexes (NOT corpus_id UNIQUE index!)
+            # Keep idx_dataset_papers_corpus_id because ON CONFLICT needs it
             drop_statements = [
-                "DROP INDEX IF EXISTS idx_dataset_papers_corpus_id CASCADE;",
                 "DROP INDEX IF EXISTS idx_dataset_papers_venue CASCADE;",
                 "DROP INDEX IF EXISTS idx_dataset_papers_conference CASCADE;",
                 "DROP INDEX IF EXISTS idx_dataset_papers_year CASCADE;",
@@ -214,14 +217,8 @@ class DatasetPaperSchema:
                 self.db_manager.execute_query(drop_sql)
                 self.logger.info(f"✓ Index {idx}/{total} dropped")
 
-            # Also drop UNIQUE constraint on corpus_id (will be recreated with index)
-            self.logger.info("Dropping UNIQUE constraint on corpus_id...")
-            self.db_manager.execute_query(
-                "ALTER TABLE dataset_papers DROP CONSTRAINT IF EXISTS dataset_papers_corpus_id_key CASCADE;"
-            )
-            self.logger.info("✓ UNIQUE constraint dropped")
-
-            self.logger.info("✓ All indexes and constraints dropped successfully")
+            self.logger.info("✓ All non-essential indexes dropped successfully")
+            self.logger.info("✓ Kept corpus_id UNIQUE index (needed for ON CONFLICT)")
             self.logger.info("⚠️  Queries will be slow until indexes are recreated!")
             return True
 
@@ -231,35 +228,43 @@ class DatasetPaperSchema:
 
     def recreate_indexes(self) -> bool:
         """
-        Recreate all 7 indexes on dataset_papers table after bulk import
+        Recreate the 6 secondary indexes on dataset_papers table after bulk import
+
+        Note: corpus_id UNIQUE index is kept during import, so only 6 indexes need rebuilding
 
         This will take time depending on the number of records:
         - 1M records: ~2-5 minutes
-        - 10M records: ~20-50 minutes
-        - 17M records: ~30-90 minutes (GIN index is slowest)
+        - 10M records: ~15-40 minutes
+        - 17M records: ~20-80 minutes (GIN index is slowest)
         """
         try:
-            self.logger.info("Recreating indexes on dataset_papers table...")
-            self.logger.info("Creating 7 indexes (corpus_id, venue, conference, year, release_id, citation_count, authors)")
-            self.logger.info("This may take 30-90 minutes for 17M records...")
+            self.logger.info("Recreating secondary indexes on dataset_papers table...")
+            self.logger.info("Creating 6 indexes (venue, conference, year, release_id, citation_count, authors)")
+            self.logger.info("Note: corpus_id UNIQUE index was kept during import")
+            self.logger.info("This may take 20-80 minutes for 17M records...")
 
             indexes = self.get_indexes_sql()
 
-            for idx, index_sql in enumerate(indexes, 1):
+            # Filter out corpus_id index (already exists)
+            indexes_to_create = [idx for idx in indexes if 'corpus_id' not in idx.lower()]
+
+            self.logger.info(f"Will recreate {len(indexes_to_create)} secondary indexes")
+
+            for idx, index_sql in enumerate(indexes_to_create, 1):
                 index_name = index_sql.split("idx_")[1].split(" ")[0] if "idx_" in index_sql else f"index_{idx}"
 
                 # Estimate time for each index
                 if "GIN" in index_sql:
-                    self.logger.info(f"Creating index {idx}/{len(indexes)}: idx_dataset_papers_{index_name}... (GIN index - may take 30+ minutes)")
+                    self.logger.info(f"Creating index {idx}/{len(indexes_to_create)}: idx_dataset_papers_{index_name}... (GIN index - may take 30+ minutes)")
                 else:
-                    self.logger.info(f"Creating index {idx}/{len(indexes)}: idx_dataset_papers_{index_name}...")
+                    self.logger.info(f"Creating index {idx}/{len(indexes_to_create)}: idx_dataset_papers_{index_name}...")
 
                 if not self.db_manager.execute_query(index_sql):
                     self.logger.warning(f"Failed to create index: {index_sql[:80]}...")
                 else:
-                    self.logger.info(f"✓ Index {idx}/{len(indexes)} created successfully")
+                    self.logger.info(f"✓ Index {idx}/{len(indexes_to_create)} created successfully")
 
-            self.logger.info("✓ All indexes recreated successfully")
+            self.logger.info("✓ All secondary indexes recreated successfully")
             return True
 
         except Exception as e:
