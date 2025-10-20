@@ -37,6 +37,8 @@ class DatasetAuthorPapersSchema:
             id SERIAL PRIMARY KEY,
             corpus_id BIGINT NOT NULL,
             author_id VARCHAR(100) NOT NULL,
+            author_name VARCHAR(500),
+            author_sequence INTEGER,
             paper_id VARCHAR(100),
             external_ids JSONB,
             title TEXT NOT NULL,
@@ -46,7 +48,6 @@ class DatasetAuthorPapersSchema:
             citation_count INTEGER DEFAULT 0,
             reference_count INTEGER DEFAULT 0,
             influential_citation_count INTEGER DEFAULT 0,
-            authors JSONB,
             fields_of_study JSONB,
             publication_types JSONB,
             is_open_access BOOLEAN DEFAULT FALSE,
@@ -70,7 +71,6 @@ class DatasetAuthorPapersSchema:
             "CREATE INDEX IF NOT EXISTS idx_dataset_author_papers_release_id ON dataset_author_papers(release_id);",
             "CREATE INDEX IF NOT EXISTS idx_dataset_author_papers_citation_count ON dataset_author_papers(citation_count);",
             "CREATE INDEX IF NOT EXISTS idx_dataset_author_papers_conference_flag ON dataset_author_papers(is_conference_paper);",
-            "CREATE INDEX IF NOT EXISTS idx_dataset_author_papers_authors ON dataset_author_papers USING GIN (authors);",
         ]
 
     def get_triggers_sql(self) -> List[str]:
