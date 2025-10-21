@@ -198,7 +198,7 @@ class S2AllAuthorsProcessor:
                 if use_copy:
                     # Use PostgreSQL COPY for maximum speed (10-50x faster)
                     insert_df.to_sql(
-                        name='all_authors',
+                        name='dataset_authors',
                         con=engine,
                         if_exists='append',
                         index=False,
@@ -213,7 +213,7 @@ class S2AllAuthorsProcessor:
                         'external_ids': JSONB
                     }
                     insert_df.to_sql(
-                        name='all_authors',
+                        name='dataset_authors',
                         con=engine,
                         if_exists='append',
                         index=False,
@@ -274,7 +274,7 @@ class S2AllAuthorsProcessor:
         Returns set of filenames (e.g., {'authors_0.gz', 'authors_1.gz'})
         """
         try:
-            query = "SELECT DISTINCT source_file FROM all_authors WHERE release_id = %s"
+            query = "SELECT DISTINCT source_file FROM dataset_authors WHERE release_id = %s"
             results = self.db_manager.fetch_all(query, (self.release_id,))
             processed = {row['source_file'] for row in results if row['source_file']}
             self.logger.info(f"Found {len(processed)} already processed files in database")
