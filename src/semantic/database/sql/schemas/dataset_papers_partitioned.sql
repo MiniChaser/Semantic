@@ -5,13 +5,15 @@
 -- RANGE partitioning by year for better query performance and maintenance.
 --
 -- Partition Strategy:
--- - NULL/Invalid years: MINVALUE to 0
--- - Historical (0-1969): Single partition
+-- - NULL years (converted to 0 by application): Stored in 0-1969 partition
+-- - Historical (0-1969): Single partition (includes NULL years converted to 0)
 -- - Historical (1970-1989): Single partition
 -- - Historical (1990-2000): Single partition
 -- - Modern (2001-2030): Annual partitions (30 partitions)
 -- - Future (2031+): MAXVALUE partition
 -- Total: 34 partitions
+--
+-- NOTE: The application automatically converts NULL year values to 0 before insertion.
 -- ============================================================================
 
 -- Drop existing table if converting from non-partitioned
@@ -50,13 +52,14 @@ CREATE TABLE IF NOT EXISTS dataset_papers (
 -- Create partitions
 -- ============================================================================
 
--- NULL and invalid years partition
+-- Invalid years partition (negative years only, should rarely be used)
 CREATE TABLE IF NOT EXISTS dataset_papers_null PARTITION OF dataset_papers
     FOR VALUES FROM (MINVALUE) TO (0);
 
 -- Historical partitions (coarse granularity)
+-- NOTE: This partition includes year=0 (NULL years converted by application)
 CREATE TABLE IF NOT EXISTS dataset_papers_0_1970 PARTITION OF dataset_papers
-    FOR VALUES FROM (0) TO (1970);  -- 0-1969
+    FOR VALUES FROM (0) TO (1970);  -- 0-1969, includes converted NULL years
 
 CREATE TABLE IF NOT EXISTS dataset_papers_1970_1990 PARTITION OF dataset_papers
     FOR VALUES FROM (1970) TO (1990);  -- 1970-1989

@@ -3,7 +3,11 @@
 Stage 2: Filter conference papers from all_papers to dataset_papers table
 
 Filters papers by conference venue from the all_papers base table and populates
-the dataset_papers table with only conference papers.
+the dataset_papers partitioned table with only conference papers.
+
+Table Structure:
+- Always creates a PARTITIONED table by year (34 partitions)
+- NULL years are automatically converted to 0 and stored in dataset_papers_0_1970 partition
 
 Performance Optimization:
 - By default, drops indexes before bulk insert and rebuilds after (5-10x faster!)
@@ -42,18 +46,14 @@ from src.semantic.database.schemas.dataset_paper import DatasetPaperSchema
 from src.semantic.services.dataset_service.conference_filter_service import ConferenceFilterService
 
 
-def setup_database_tables(db_manager: DatabaseManager, drop_indexes: bool = True, use_partitioning: bool = False) -> bool:
+def setup_database_tables(db_manager: DatabaseManager, drop_indexes: bool = True) -> bool:
     """Setup database tables if they don't exist"""
     print("\n=== Setting up database tables ===")
 
     try:
-        # Create dataset_papers table (conference papers)
-        paper_schema = DatasetPaperSchema(db_manager, use_partitioning=use_partitioning)
-
-        if use_partitioning:
-            print("📊 Using PARTITIONED table (by year)")
-        else:
-            print("📋 Using standard (non-partitioned) table")
+        # Create dataset_papers table (conference papers) - always partitioned
+        paper_schema = DatasetPaperSchema(db_manager)
+        print("📊 Using PARTITIONED table (by year)")
 
         # Check if table exists and has data
         count_query = "SELECT COUNT(*) as count FROM dataset_papers"
@@ -198,7 +198,11 @@ def main():
 Stage 2: Filter Conference Papers
 
 This script filters papers by conference venue from the all_papers base table
-and populates the dataset_papers table with only conference papers.
+and populates the dataset_papers PARTITIONED table with only conference papers.
+
+Table Structure:
+- Always creates a PARTITIONED table by year (34 partitions)
+- NULL years are automatically converted to 0 and stored in dataset_papers_0_1970 partition
 
 Performance Optimization:
 By default, this script drops indexes before bulk insert and rebuilds them after,
@@ -207,9 +211,10 @@ resulting in 5-10x faster performance:
 - Without optimization:     ~10-11 hours for 17M records
 
 Process:
-1. Drop all 7 indexes from dataset_papers table (if not --keep-indexes)
-2. Bulk insert conference papers from all_papers (uses venue_normalized index)
-3. Rebuild all indexes in one go (more efficient than per-row updates)
+1. Create partitioned table if not exists (34 partitions by year)
+2. Drop all 7 indexes from dataset_papers table (if not --keep-indexes)
+3. Bulk insert conference papers from all_papers (uses venue_normalized index)
+4. Rebuild all indexes in one go (more efficient than per-row updates)
 
 IMPORTANT: This script processes ALL data in the all_papers table, regardless
 of release_id. It does not perform incremental filtering.
@@ -217,9 +222,6 @@ of release_id. It does not perform incremental filtering.
 Examples:
   # Normal mode (recommended - with index optimization)
   %(prog)s
-
-  # Create partitioned table by year (for better query performance)
-  %(prog)s --use-partitioning
 
   # Adjust batch size
   %(prog)s --batch-size 20000
@@ -251,12 +253,6 @@ Examples:
         help='Keep indexes during insert (slower, but safer - same as original script)'
     )
 
-    parser.add_argument(
-        '--use-partitioning',
-        action='store_true',
-        help='Create partitioned table by year (34 partitions, for better query performance)'
-    )
-
     args = parser.parse_args()
 
     # Validate options
@@ -277,9 +273,9 @@ Examples:
 
     print("✓ Database connection successful")
 
-    # Setup database tables
+    # Setup database tables (always partitioned)
     drop_indexes = not args.keep_indexes
-    if not setup_database_tables(db_manager, drop_indexes=drop_indexes, use_partitioning=args.use_partitioning):
+    if not setup_database_tables(db_manager, drop_indexes=drop_indexes):
         return 1
 
     try:
