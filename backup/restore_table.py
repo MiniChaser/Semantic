@@ -11,6 +11,7 @@ import argparse
 import subprocess
 from pathlib import Path
 from dotenv import load_dotenv
+import psycopg2
 
 
 def setup_environment():
@@ -36,6 +37,94 @@ def get_db_config():
     return config
 
 
+def detect_postgres_mode(config=None):
+    """
+    Detect how to access PostgreSQL (native, docker, or none)
+
+    Args:
+        config: Database configuration dict (optional, for Docker container detection)
+
+    Returns:
+        tuple: (mode, container_name) where mode is 'native', 'docker', or 'none'
+    """
+    # First check if user manually specified a Docker container
+    docker_container = os.getenv('POSTGRES_DOCKER_CONTAINER')
+    if docker_container:
+        return ('docker', docker_container)
+
+    # Check if native psql/pg_dump is available
+    try:
+        result = subprocess.run(
+            ['which', 'psql'],
+            capture_output=True,
+            text=True,
+            timeout=5
+        )
+        if result.returncode == 0:
+            return ('native', None)
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        pass
+
+    # Check for Docker container running PostgreSQL
+    try:
+        result = subprocess.run(
+            ['docker', 'ps', '--format', '{{.Names}}'],
+            capture_output=True,
+            text=True,
+            timeout=5
+        )
+        if result.returncode == 0:
+            containers = result.stdout.strip().split('\n')
+            # Look for common PostgreSQL container names
+            for container in containers:
+                if container and 'postgres' in container.lower():
+                    return ('docker', container)
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        pass
+
+    # Try with container IDs if permission denied
+    try:
+        result = subprocess.run(
+            ['docker', 'ps', '--format', '{{.ID}}'],
+            capture_output=True,
+            text=True,
+            timeout=5
+        )
+        if result.returncode == 0:
+            container_ids = result.stdout.strip().split('\n')
+            for cid in container_ids:
+                if cid:
+                    return ('docker', cid)
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        pass
+
+    # If Docker command failed (permission issue), try to find container via port mapping
+    if config:
+        try:
+            # Try sudo docker ps (might work in some environments)
+            result = subprocess.run(
+                ['sudo', '-n', 'docker', 'ps', '--format', '{{.Names}}\t{{.Ports}}'],
+                capture_output=True,
+                text=True,
+                timeout=5
+            )
+            if result.returncode == 0:
+                for line in result.stdout.strip().split('\n'):
+                    if not line:
+                        continue
+                    parts = line.split('\t')
+                    if len(parts) >= 2:
+                        container_name = parts[0]
+                        ports = parts[1]
+                        # Check if this container has the same port as our config
+                        if config['port'] in ports and 'postgres' in container_name.lower():
+                            return ('docker', container_name)
+        except (subprocess.TimeoutExpired, FileNotFoundError, subprocess.CalledProcessError):
+            pass
+
+    return ('none', None)
+
+
 def extract_table_name_from_filename(backup_file):
     """
     Extract table name from backup filename
@@ -56,66 +145,50 @@ def extract_table_name_from_filename(backup_file):
 
 
 def check_table_exists(table_name, config):
-    """Check if the table exists in the database"""
+    """Check if the table exists in the database using psycopg2"""
     try:
-        check_cmd = [
-            'psql',
-            '-h', config['host'],
-            '-p', config['port'],
-            '-U', config['user'],
-            '-d', config['database'],
-            '-t',  # tuple only mode
-            '-c', f"SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_name = '{table_name}');"
-        ]
-
-        env = os.environ.copy()
-        env['PGPASSWORD'] = config['password']
-
-        result = subprocess.run(
-            check_cmd,
-            env=env,
-            capture_output=True,
-            text=True,
-            check=True
+        conn = psycopg2.connect(
+            host=config['host'],
+            port=config['port'],
+            database=config['database'],
+            user=config['user'],
+            password=config['password']
         )
-
-        exists = result.stdout.strip().lower() == 't'
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_name = %s);",
+            (table_name,)
+        )
+        exists = cursor.fetchone()[0]
+        cursor.close()
+        conn.close()
         return exists
-    except subprocess.CalledProcessError as e:
+    except Exception as e:
         print(f"Error checking table existence: {e}")
-        print(f"stderr: {e.stderr}")
         return False
 
 
 def drop_table(table_name, config, cascade=False):
-    """Drop a table from the database"""
+    """Drop a table from the database using psycopg2"""
     try:
-        cascade_clause = "CASCADE" if cascade else ""
-        drop_cmd = [
-            'psql',
-            '-h', config['host'],
-            '-p', config['port'],
-            '-U', config['user'],
-            '-d', config['database'],
-            '-c', f"DROP TABLE IF EXISTS {table_name} {cascade_clause};"
-        ]
-
-        env = os.environ.copy()
-        env['PGPASSWORD'] = config['password']
-
-        result = subprocess.run(
-            drop_cmd,
-            env=env,
-            capture_output=True,
-            text=True,
-            check=True
+        conn = psycopg2.connect(
+            host=config['host'],
+            port=config['port'],
+            database=config['database'],
+            user=config['user'],
+            password=config['password']
         )
+        conn.autocommit = True
+        cursor = conn.cursor()
+        cascade_clause = "CASCADE" if cascade else ""
+        cursor.execute(f"DROP TABLE IF EXISTS {table_name} {cascade_clause};")
+        cursor.close()
+        conn.close()
 
         print(f"✓ Table '{table_name}' dropped successfully")
         return True
-    except subprocess.CalledProcessError as e:
+    except Exception as e:
         print(f"Error dropping table: {e}")
-        print(f"stderr: {e.stderr}")
         return False
 
 
@@ -150,7 +223,7 @@ def build_sed_replace_patterns(source_table, target_table):
     return sed_pattern
 
 
-def restore_table(backup_file, config, table_name=None, drop_existing=False, cascade=False, rename_to=None):
+def restore_table(backup_file, config, table_name=None, drop_existing=False, cascade=False, rename_to=None, mode='native', container=None):
     """
     Restore a specific database table from a compressed SQL backup file
 
@@ -161,6 +234,8 @@ def restore_table(backup_file, config, table_name=None, drop_existing=False, cas
         drop_existing: Whether to drop existing table before restore
         cascade: Whether to use CASCADE when dropping table
         rename_to: Rename table during restore (restore to different table name)
+        mode: Execution mode ('native' or 'docker')
+        container: Docker container name (required if mode='docker')
 
     Returns:
         True if successful, False otherwise
@@ -220,16 +295,30 @@ def restore_table(backup_file, config, table_name=None, drop_existing=False, cas
         print(f"Starting restore of table '{target_table}' to database '{config['database']}'...")
         print(f"Backup file: {backup_path}")
 
-        # Build psql command
-        restore_cmd = [
-            'psql',
-            '-h', config['host'],
-            '-p', config['port'],
-            '-U', config['user'],
-            '-d', config['database'],
-            '--set', 'ON_ERROR_STOP=on',  # Stop on first error
-            '-v', 'ON_ERROR_STOP=1'       # Alternative syntax
-        ]
+        # Build psql command based on mode
+        if mode == 'docker':
+            if not container:
+                print("Error: Docker container name required for docker mode")
+                return False
+            restore_cmd = [
+                'sudo', 'docker', 'exec', '-i', container,
+                'psql',
+                '-h', 'localhost',
+                '-U', config['user'],
+                '-d', config['database'],
+                '--set', 'ON_ERROR_STOP=on',
+                '-v', 'ON_ERROR_STOP=1'
+            ]
+        else:
+            restore_cmd = [
+                'psql',
+                '-h', config['host'],
+                '-p', config['port'],
+                '-U', config['user'],
+                '-d', config['database'],
+                '--set', 'ON_ERROR_STOP=on',  # Stop on first error
+                '-v', 'ON_ERROR_STOP=1'       # Alternative syntax
+            ]
 
         # Decompress and pipe to psql (with optional sed for table renaming)
         with open(backup_path, 'rb') as f:
@@ -423,12 +512,23 @@ Examples:
     # Get database configuration
     config = get_db_config()
 
+    # Detect PostgreSQL access mode
+    mode, container = detect_postgres_mode(config)
+
     print(f"Database Configuration:")
     print(f"  Host: {config['host']}")
     print(f"  Port: {config['port']}")
     print(f"  Database: {config['database']}")
     print(f"  User: {config['user']}")
+    print(f"  Mode: {mode.upper()}" + (f" (container: {container})" if container else ""))
     print()
+
+    if mode == 'none':
+        print("Error: PostgreSQL tools not found!")
+        print("Please either:")
+        print("  1. Install PostgreSQL client tools (psql, pg_dump)")
+        print("  2. Ensure PostgreSQL Docker container is running")
+        sys.exit(1)
 
     # Perform restore
     result = restore_table(
@@ -437,7 +537,9 @@ Examples:
         table_name=args.table_name,
         drop_existing=args.drop_existing,
         cascade=args.cascade,
-        rename_to=args.rename_to
+        rename_to=args.rename_to,
+        mode=mode,
+        container=container
     )
 
     if result:

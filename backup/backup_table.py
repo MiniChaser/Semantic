@@ -14,6 +14,7 @@ import tempfile
 from datetime import datetime
 from pathlib import Path
 from dotenv import load_dotenv
+import psycopg2
 
 
 def setup_environment():
@@ -39,71 +40,143 @@ def get_db_config():
     return config
 
 
-def check_table_exists(table_name, config):
-    """Check if the table exists in the database"""
+def detect_postgres_mode(config=None):
+    """
+    Detect how to access PostgreSQL (native, docker, or none)
+
+    Args:
+        config: Database configuration dict (optional, for Docker container detection)
+
+    Returns:
+        tuple: (mode, container_name) where mode is 'native', 'docker', or 'none'
+    """
+    # First check if user manually specified a Docker container
+    docker_container = os.getenv('POSTGRES_DOCKER_CONTAINER')
+    if docker_container:
+        return ('docker', docker_container)
+
+    # Check if native psql/pg_dump is available
     try:
-        # Use psql to check if table exists
-        check_cmd = [
-            'psql',
-            '-h', config['host'],
-            '-p', config['port'],
-            '-U', config['user'],
-            '-d', config['database'],
-            '-t',  # tuple only mode
-            '-c', f"SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_name = '{table_name}');"
-        ]
-
-        env = os.environ.copy()
-        env['PGPASSWORD'] = config['password']
-
         result = subprocess.run(
-            check_cmd,
-            env=env,
+            ['which', 'psql'],
             capture_output=True,
             text=True,
-            check=True
+            timeout=5
         )
+        if result.returncode == 0:
+            return ('native', None)
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        pass
 
-        exists = result.stdout.strip().lower() == 't'
+    # Check for Docker container running PostgreSQL
+    try:
+        result = subprocess.run(
+            ['docker', 'ps', '--format', '{{.Names}}'],
+            capture_output=True,
+            text=True,
+            timeout=5
+        )
+        if result.returncode == 0:
+            containers = result.stdout.strip().split('\n')
+            # Look for common PostgreSQL container names
+            for container in containers:
+                if container and 'postgres' in container.lower():
+                    return ('docker', container)
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        pass
+
+    # Try with container IDs if permission denied
+    try:
+        result = subprocess.run(
+            ['docker', 'ps', '--format', '{{.ID}}'],
+            capture_output=True,
+            text=True,
+            timeout=5
+        )
+        if result.returncode == 0:
+            container_ids = result.stdout.strip().split('\n')
+            for cid in container_ids:
+                if cid:
+                    return ('docker', cid)
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        pass
+
+    # If Docker command failed (permission issue), try to find container via port mapping
+    if config:
+        try:
+            # Try sudo docker ps (might work in some environments)
+            result = subprocess.run(
+                ['sudo', '-n', 'docker', 'ps', '--format', '{{.Names}}\t{{.Ports}}'],
+                capture_output=True,
+                text=True,
+                timeout=5
+            )
+            if result.returncode == 0:
+                for line in result.stdout.strip().split('\n'):
+                    if not line:
+                        continue
+                    parts = line.split('\t')
+                    if len(parts) >= 2:
+                        container_name = parts[0]
+                        ports = parts[1]
+                        # Check if this container has the same port as our config
+                        if config['port'] in ports and 'postgres' in container_name.lower():
+                            return ('docker', container_name)
+        except (subprocess.TimeoutExpired, FileNotFoundError, subprocess.CalledProcessError):
+            pass
+
+    return ('none', None)
+
+
+def check_table_exists(table_name, config):
+    """Check if the table exists in the database using psycopg2"""
+    try:
+        conn = psycopg2.connect(
+            host=config['host'],
+            port=config['port'],
+            database=config['database'],
+            user=config['user'],
+            password=config['password']
+        )
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_name = %s);",
+            (table_name,)
+        )
+        exists = cursor.fetchone()[0]
+        cursor.close()
+        conn.close()
         return exists
-    except subprocess.CalledProcessError as e:
+    except Exception as e:
         print(f"Error checking table existence: {e}")
-        print(f"stderr: {e.stderr}")
         return False
 
 
 def get_table_size(table_name, config):
-    """Get the size of a table in the database"""
+    """Get the size of a table in the database using psycopg2"""
     try:
-        size_cmd = [
-            'psql',
-            '-h', config['host'],
-            '-p', config['port'],
-            '-U', config['user'],
-            '-d', config['database'],
-            '-t',
-            '-c', f"SELECT pg_size_pretty(pg_total_relation_size('{table_name}'));"
-        ]
-
-        env = os.environ.copy()
-        env['PGPASSWORD'] = config['password']
-
-        result = subprocess.run(
-            size_cmd,
-            env=env,
-            capture_output=True,
-            text=True,
-            check=True
+        conn = psycopg2.connect(
+            host=config['host'],
+            port=config['port'],
+            database=config['database'],
+            user=config['user'],
+            password=config['password']
         )
-
-        size = result.stdout.strip()
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT pg_size_pretty(pg_total_relation_size(%s));",
+            (table_name,)
+        )
+        size = cursor.fetchone()[0]
+        cursor.close()
+        conn.close()
         return size if size else "Unknown"
-    except subprocess.CalledProcessError as e:
+    except Exception as e:
         print(f"Warning: Could not get table size: {e}")
         return "Unknown"
 
 
-def backup_table_parallel(table_name, config, output_dir=None, jobs=4):
+def backup_table_parallel(table_name, config, output_dir=None, jobs=4, mode='native', container=None):
     """
     Backup a specific database table using parallel jobs
 
@@ -112,6 +185,8 @@ def backup_table_parallel(table_name, config, output_dir=None, jobs=4):
         config: Database configuration dictionary
         output_dir: Directory to store backup files (defaults to backup directory)
         jobs: Number of parallel jobs
+        mode: Execution mode ('native' or 'docker')
+        container: Docker container name (required if mode='docker')
 
     Returns:
         Path to the backup file if successful, None otherwise
@@ -148,20 +223,39 @@ def backup_table_parallel(table_name, config, output_dir=None, jobs=4):
         print(f"Backup location: {backup_path}")
 
         # Build pg_dump command with directory format and parallel jobs
-        dump_cmd = [
-            'pg_dump',
-            '-h', config['host'],
-            '-p', config['port'],
-            '-U', config['user'],
-            '-d', config['database'],
-            '-t', table_name,
-            '--format=directory',  # Directory format for parallel dumps
-            '-j', str(jobs),       # Number of parallel jobs
-            '-f', str(dump_dir),   # Output directory
-            '--no-owner',
-            '--no-privileges',
-            '--verbose'
-        ]
+        if mode == 'docker':
+            if not container:
+                print("Error: Docker container name required for docker mode")
+                return None
+            dump_cmd = [
+                'sudo', 'docker', 'exec', container,
+                'pg_dump',
+                '-h', 'localhost',  # Inside container, use localhost
+                '-U', config['user'],
+                '-d', config['database'],
+                '-t', table_name,
+                '--format=directory',
+                '-j', str(jobs),
+                '-f', '/tmp/dump',  # Temporary location inside container
+                '--no-owner',
+                '--no-privileges',
+                '--verbose'
+            ]
+        else:
+            dump_cmd = [
+                'pg_dump',
+                '-h', config['host'],
+                '-p', config['port'],
+                '-U', config['user'],
+                '-d', config['database'],
+                '-t', table_name,
+                '--format=directory',  # Directory format for parallel dumps
+                '-j', str(jobs),       # Number of parallel jobs
+                '-f', str(dump_dir),   # Output directory
+                '--no-owner',
+                '--no-privileges',
+                '--verbose'
+            ]
 
         # Execute pg_dump
         result = subprocess.run(
@@ -174,6 +268,15 @@ def backup_table_parallel(table_name, config, output_dir=None, jobs=4):
         if result.returncode != 0:
             print(f"Error during backup: {result.stderr}")
             return None
+
+        # For Docker mode, copy the dump directory from container
+        if mode == 'docker':
+            print("Copying backup from container...")
+            copy_cmd = ['sudo', 'docker', 'cp', f'{container}:/tmp/dump', str(dump_dir)]
+            copy_result = subprocess.run(copy_cmd, capture_output=True, text=True)
+            if copy_result.returncode != 0:
+                print(f"Error copying from container: {copy_result.stderr}")
+                return None
 
         # Compress the directory into tar.gz
         print("Compressing backup...")
@@ -219,7 +322,7 @@ def backup_table_parallel(table_name, config, output_dir=None, jobs=4):
             shutil.rmtree(temp_dir)
 
 
-def backup_table(table_name, config, output_dir=None):
+def backup_table(table_name, config, output_dir=None, mode='native', container=None):
     """
     Backup a specific database table to a compressed SQL file
 
@@ -227,6 +330,8 @@ def backup_table(table_name, config, output_dir=None):
         table_name: Name of the table to backup
         config: Database configuration dictionary
         output_dir: Directory to store backup files (defaults to backup directory)
+        mode: Execution mode ('native' or 'docker')
+        container: Docker container name (required if mode='docker')
 
     Returns:
         Path to the backup file if successful, None otherwise
@@ -254,21 +359,6 @@ def backup_table(table_name, config, output_dir=None):
     backup_filename = f"{table_name}_{timestamp}.sql.gz"
     backup_path = output_dir / backup_filename
 
-    # Build pg_dump command
-    # Using --format=plain for SQL format, pipe to gzip for compression
-    dump_cmd = [
-        'pg_dump',
-        '-h', config['host'],
-        '-p', config['port'],
-        '-U', config['user'],
-        '-d', config['database'],
-        '-t', table_name,  # Only dump specified table
-        '--format=plain',  # Plain SQL format
-        '--no-owner',      # Don't output ownership commands
-        '--no-privileges', # Don't output privilege commands
-        '--verbose'        # Verbose output
-    ]
-
     # Set PGPASSWORD environment variable
     env = os.environ.copy()
     env['PGPASSWORD'] = config['password']
@@ -276,6 +366,39 @@ def backup_table(table_name, config, output_dir=None):
     try:
         print(f"Starting backup of table '{table_name}' from database '{config['database']}'...")
         print(f"Backup location: {backup_path}")
+
+        # Build pg_dump command based on mode
+        if mode == 'docker':
+            if not container:
+                print("Error: Docker container name required for docker mode")
+                return None
+            # For Docker mode, run pg_dump inside container and pipe output
+            # Try with sudo if docker command fails due to permissions
+            dump_cmd = [
+                'sudo', 'docker', 'exec', '-i', container,
+                'pg_dump',
+                '-h', 'localhost',
+                '-U', config['user'],
+                '-d', config['database'],
+                '-t', table_name,
+                '--format=plain',
+                '--no-owner',
+                '--no-privileges'
+            ]
+        else:
+            # Native mode - use system pg_dump
+            dump_cmd = [
+                'pg_dump',
+                '-h', config['host'],
+                '-p', config['port'],
+                '-U', config['user'],
+                '-d', config['database'],
+                '-t', table_name,
+                '--format=plain',
+                '--no-owner',
+                '--no-privileges',
+                '--verbose'
+            ]
 
         # Execute pg_dump and pipe to gzip
         with open(backup_path, 'wb') as f:
@@ -374,20 +497,31 @@ Examples:
     # Get database configuration
     config = get_db_config()
 
+    # Detect PostgreSQL access mode
+    mode, container = detect_postgres_mode(config)
+
     print(f"Database Configuration:")
     print(f"  Host: {config['host']}")
     print(f"  Port: {config['port']}")
     print(f"  Database: {config['database']}")
     print(f"  User: {config['user']}")
+    print(f"  Mode: {mode.upper()}" + (f" (container: {container})" if container else ""))
     print()
+
+    if mode == 'none':
+        print("Error: PostgreSQL tools not found!")
+        print("Please either:")
+        print("  1. Install PostgreSQL client tools (psql, pg_dump)")
+        print("  2. Ensure PostgreSQL Docker container is running")
+        sys.exit(1)
 
     # Perform backup
     if args.jobs > 1:
         # Use parallel backup
-        result = backup_table_parallel(args.table_name, config, args.output_dir, args.jobs)
+        result = backup_table_parallel(args.table_name, config, args.output_dir, args.jobs, mode, container)
     else:
         # Use standard backup
-        result = backup_table(args.table_name, config, args.output_dir)
+        result = backup_table(args.table_name, config, args.output_dir, mode, container)
 
     if result:
         sys.exit(0)
