@@ -223,6 +223,149 @@ def build_sed_replace_patterns(source_table, target_table):
     return sed_pattern
 
 
+def check_sudo_password_required():
+    """
+    Check if sudo requires password for docker commands
+
+    Returns:
+        True if password is required, False otherwise
+    """
+    try:
+        result = subprocess.run(
+            ['sudo', '-n', 'docker', 'ps'],
+            capture_output=True,
+            timeout=2
+        )
+        # If return code is 0, passwordless sudo works
+        return result.returncode != 0
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        return True
+
+
+def restore_table_docker_copy_method(backup_path, source_table, target_table, rename_to, config, container, env):
+    """
+    Alternative restore method for Docker when sudo requires password.
+    Copies the file to container first, then restores from inside.
+
+    Args:
+        backup_path: Path to backup file
+        source_table: Original table name from backup
+        target_table: Target table name
+        rename_to: Whether renaming is needed
+        config: Database configuration
+        container: Docker container name
+        env: Environment variables including PGPASSWORD
+
+    Returns:
+        True if successful, False otherwise
+    """
+    import tempfile
+    import shutil
+
+    temp_dir = None
+    try:
+        # Create temporary directory
+        temp_dir = Path(tempfile.mkdtemp(prefix="restore_"))
+        temp_sql = temp_dir / "restore.sql"
+
+        print("Step 1: Decompressing backup file...")
+        # Decompress and optionally rename table
+        if rename_to:
+            # Decompress with table renaming
+            with open(backup_path, 'rb') as f_in:
+                gunzip_proc = subprocess.Popen(
+                    ['gunzip', '-c'],
+                    stdin=f_in,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE
+                )
+
+                sed_pattern = build_sed_replace_patterns(source_table, target_table)
+                sed_proc = subprocess.Popen(
+                    ['sed', sed_pattern],
+                    stdin=gunzip_proc.stdout,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE
+                )
+                gunzip_proc.stdout.close()
+
+                # Write to temp file
+                with open(temp_sql, 'wb') as f_out:
+                    shutil.copyfileobj(sed_proc.stdout, f_out)
+
+                sed_proc.wait()
+                gunzip_proc.wait()
+
+                if gunzip_proc.returncode != 0:
+                    print(f"Error: Failed to decompress backup file")
+                    return False
+                if sed_proc.returncode != 0:
+                    print(f"Error: Failed to rename table in SQL")
+                    return False
+        else:
+            # Simple decompression
+            with open(backup_path, 'rb') as f_in, open(temp_sql, 'wb') as f_out:
+                gunzip_proc = subprocess.Popen(
+                    ['gunzip', '-c'],
+                    stdin=f_in,
+                    stdout=f_out,
+                    stderr=subprocess.PIPE
+                )
+                gunzip_proc.wait()
+
+                if gunzip_proc.returncode != 0:
+                    stderr = gunzip_proc.stderr.read().decode()
+                    print(f"Error: Failed to decompress backup file: {stderr}")
+                    return False
+
+        print(f"✓ Decompressed to {temp_sql}")
+        print(f"  Size: {temp_sql.stat().st_size / (1024*1024):.2f} MB")
+
+        print("\nStep 2: Copying SQL file to Docker container...")
+        # Copy SQL file to container
+        copy_cmd = ['sudo', 'docker', 'cp', str(temp_sql), f'{container}:/tmp/restore.sql']
+        copy_result = subprocess.run(copy_cmd, capture_output=True, text=True)
+
+        if copy_result.returncode != 0:
+            print(f"Error: Failed to copy file to container: {copy_result.stderr}")
+            return False
+
+        print("✓ File copied to container:/tmp/restore.sql")
+
+        print(f"\nStep 3: Restoring table '{target_table}'...")
+        # Run psql inside container
+        psql_cmd = [
+            'sudo', 'docker', 'exec', container,
+            'sh', '-c',
+            f"PGPASSWORD='{config['password']}' psql -h localhost -U {config['user']} -d {config['database']} --set ON_ERROR_STOP=on < /tmp/restore.sql"
+        ]
+
+        psql_result = subprocess.run(psql_cmd, capture_output=True, text=True)
+
+        if psql_result.returncode != 0:
+            print(f"Error during restore:")
+            print(psql_result.stderr)
+            return False
+
+        print("✓ Restore completed successfully!")
+
+        # Clean up file in container
+        print("\nStep 4: Cleaning up...")
+        cleanup_cmd = ['sudo', 'docker', 'exec', container, 'rm', '/tmp/restore.sql']
+        subprocess.run(cleanup_cmd, capture_output=True)
+
+        print(f"✓ Table '{target_table}' restored to database '{config['database']}'")
+        return True
+
+    except Exception as e:
+        print(f"Error during restore: {e}")
+        return False
+    finally:
+        # Clean up temporary directory
+        if temp_dir and temp_dir.exists():
+            shutil.rmtree(temp_dir)
+
+
 def restore_table(backup_file, config, table_name=None, drop_existing=False, cascade=False, rename_to=None, mode='native', container=None):
     """
     Restore a specific database table from a compressed SQL backup file
@@ -296,19 +439,27 @@ def restore_table(backup_file, config, table_name=None, drop_existing=False, cas
         print(f"Backup file: {backup_path}")
 
         # Build psql command based on mode
+        use_docker_copy_method = False
         if mode == 'docker':
             if not container:
                 print("Error: Docker container name required for docker mode")
                 return False
-            restore_cmd = [
-                'sudo', 'docker', 'exec', '-i', container,
-                'psql',
-                '-h', 'localhost',
-                '-U', config['user'],
-                '-d', config['database'],
-                '--set', 'ON_ERROR_STOP=on',
-                '-v', 'ON_ERROR_STOP=1'
-            ]
+
+            # Check if sudo requires password
+            if check_sudo_password_required():
+                print("Warning: sudo requires password for docker commands")
+                print("Using alternative method: copy file to container first")
+                use_docker_copy_method = True
+            else:
+                restore_cmd = [
+                    'sudo', 'docker', 'exec', '-i', container,
+                    'psql',
+                    '-h', 'localhost',
+                    '-U', config['user'],
+                    '-d', config['database'],
+                    '--set', 'ON_ERROR_STOP=on',
+                    '-v', 'ON_ERROR_STOP=1'
+                ]
         else:
             restore_cmd = [
                 'psql',
@@ -319,6 +470,13 @@ def restore_table(backup_file, config, table_name=None, drop_existing=False, cas
                 '--set', 'ON_ERROR_STOP=on',  # Stop on first error
                 '-v', 'ON_ERROR_STOP=1'       # Alternative syntax
             ]
+
+        # Alternative method for Docker when sudo requires password
+        if use_docker_copy_method:
+            return restore_table_docker_copy_method(
+                backup_path, source_table, target_table, rename_to,
+                config, container, env
+            )
 
         # Decompress and pipe to psql (with optional sed for table renaming)
         with open(backup_path, 'rb') as f:
@@ -362,22 +520,44 @@ def restore_table(backup_file, config, table_name=None, drop_existing=False, cas
             # Wait for all processes to complete
             psql_stdout, psql_stderr = psql_process.communicate()
 
+            # Check all processes in the pipeline for errors
+            errors = []
+
             if rename_to:
                 sed_return_code = sed_process.wait()
                 if sed_return_code != 0:
                     sed_stderr = sed_process.stderr.read().decode()
-                    print(f"Error during table name replacement: {sed_stderr}")
-                    return False
+                    errors.append(f"Table name replacement (sed) failed: {sed_stderr}")
 
             gunzip_return_code = gunzip_process.wait()
             if gunzip_return_code != 0:
                 gunzip_stderr = gunzip_process.stderr.read().decode()
-                print(f"Error during decompression: {gunzip_stderr}")
-                return False
+                if gunzip_stderr.strip():
+                    errors.append(f"Decompression (gunzip) failed: {gunzip_stderr}")
+                else:
+                    # Gunzip failed but no error message - likely SIGPIPE from psql failure
+                    errors.append(f"Decompression (gunzip) failed with exit code {gunzip_return_code} (possibly due to downstream process failure)")
 
             if psql_process.returncode != 0:
+                psql_stderr_text = psql_stderr.decode()
+                if psql_stderr_text.strip():
+                    errors.append(f"Database restore (psql) failed: {psql_stderr_text}")
+                else:
+                    errors.append(f"Database restore (psql) failed with exit code {psql_process.returncode}")
+
+            # Report all errors
+            if errors:
                 print(f"Error during restore:")
-                print(psql_stderr.decode())
+                for i, error in enumerate(errors, 1):
+                    print(f"  {i}. {error}")
+                print("\nTroubleshooting tips:")
+                if mode == 'docker' and 'sudo' in str(restore_cmd):
+                    print("  - If you see 'sudo password' prompts, configure passwordless sudo for docker:")
+                    print("    sudo visudo -f /etc/sudoers.d/docker")
+                    print("    Add: <your-username> ALL=(ALL) NOPASSWD: /usr/bin/docker")
+                print("  - Check if the database is running and accessible")
+                print("  - Verify database credentials in .env file")
+                print("  - Check if table schema is compatible")
                 return False
 
         print(f"✓ Restore completed successfully!")
