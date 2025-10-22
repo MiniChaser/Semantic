@@ -510,13 +510,10 @@ class S2EnrichmentService:
             batch_size = 20  # Process 20 papers at a time
             progress_interval = min(100, max(10, total_papers // 20))  # Show progress every 5% or at least every 100 papers
 
-            # Convert dict to list of papers
-            papers_list = list(papers_to_enrich.values())
-            
             # Process papers in batches
             for batch_start in range(0, total_papers, batch_size):
                 batch_end = min(batch_start + batch_size, total_papers)
-                batch_papers = papers_list[batch_start:batch_end]
+                batch_papers = papers_to_enrich[batch_start:batch_end]
                 
                 # Process batch concurrently
                 concurrent_processor = ConcurrentPaperProcessor(self.logger, self.statistics)
