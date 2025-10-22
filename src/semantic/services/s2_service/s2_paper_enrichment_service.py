@@ -579,16 +579,9 @@ class S2EnrichmentService:
             # Step 2: Process each paper in the batch
             for dblp_id, dblp_paper, year in valid_papers:
                 try:
-                    # Get dataset result from batch query
-                    dataset_result = dataset_results.get((dblp_paper.title, year))
-                    
                     # Step 1: Try Tier 1 (database matching from dataset_papers)
-                    # Create a single paper result dict for the current paper
-                    single_paper_result = {}
-                    if dataset_result:
-                        single_paper_result[(dblp_paper.title, year)] = dataset_result
-                    
-                    enriched_paper = self._try_tier1_database_matching(dblp_paper, single_paper_result)
+                    # Pass the entire dataset_results dictionary to the method
+                    enriched_paper = self._try_tier1_database_matching(dblp_paper, dataset_results)
 
                     # Step 2: If Tier 1 failed, try Tier 2 (S2 API title-based matching)
                     # if not enriched_paper:

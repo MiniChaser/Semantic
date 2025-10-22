@@ -314,17 +314,27 @@ class EnrichedPaperRepository:
             if not papers:
                 return {}
 
-            # Group papers by year for partition pruning
-            papers_by_year = {}
+            # Initialize result dictionary with None values
+            results = {(title, year): None for title, year in papers}
+
+            # Filter valid papers
+            valid_papers = []
             for title, year in papers:
                 if not title or not title.strip():
                     continue
+                if not year or year == 0:
+                    continue
+                valid_papers.append((title.strip(), year))
+
+            if not valid_papers:
+                return results
+
+            # Group papers by year for partition pruning
+            papers_by_year = {}
+            for title, year in valid_papers:
                 if year not in papers_by_year:
                     papers_by_year[year] = []
-                papers_by_year[year].append(title.strip().lower())
-
-            # Initialize result dictionary
-            results = {}
+                papers_by_year[year].append(title)
 
             # Query each year group separately
             for year, titles in papers_by_year.items():
@@ -358,30 +368,26 @@ class EnrichedPaperRepository:
                 # Execute query
                 params = [year] + titles
                 batch_results = self.db.fetch_all(sql, params)
+                self.logger.info(f"Batch query for year {year}: found {len(batch_results)} matches for {len(titles)} titles")
 
-                # Create mapping from normalized title to result
+                # Create mapping from original title to result
                 title_to_result = {}
                 for row in batch_results:
                     if row['title']:
-                        title_to_result[row['title'].lower()] = dict(row)
+                        # Use original title for exact matching
+                        title_to_result[row['title']] = dict(row)
 
-                # Match results back to original papers
-                for title, year in papers:
-                    if not title or not title.strip():
-                        results[(title, year)] = None
-                        continue
-
-                    normalized_title = title.strip().lower()
-                    if normalized_title in title_to_result:
-                        result = title_to_result[normalized_title]
-                        # Calculate similarity for logging
-                        from ...services.s2_service.s2_service import S2ValidationService
-                        validator = S2ValidationService()
-                        similarity = validator.calculate_title_similarity(title, result['title'])
+                # Match results back to original papers using exact matching
+                for original_title, year in valid_papers:
+                    # Try exact match (case-sensitive)
+                    if original_title in title_to_result:
+                        result = title_to_result[original_title]
+                        similarity = 1.0  # Exact match
                         result['_title_similarity'] = similarity
-                        results[(title, year)] = result
+                        results[(original_title, year)] = result
+                        self.logger.debug(f"Exact match found: '{original_title}' -> '{result['title']}'")
                     else:
-                        results[(title, year)] = None
+                        self.logger.debug(f"No exact match found for: '{original_title}' (year: {year})")
 
             return results
 
