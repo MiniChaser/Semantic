@@ -236,7 +236,30 @@ class EnrichedPaperRepository:
             # Build LIKE pattern with first few words
             like_pattern = '%' + '%'.join(words[:3]) + '%'
 
-         
+            sql_fuzzy = """
+            SELECT
+                corpus_id,
+                paper_id,
+                external_ids,
+                title,
+                abstract,
+                venue,
+                year,
+                citation_count,
+                reference_count,
+                influential_citation_count,
+                authors,
+                fields_of_study,
+                publication_types,
+                is_open_access,
+                open_access_pdf
+            FROM dataset_papers
+            WHERE year = %s
+            AND LOWER(title) LIKE %s
+            LIMIT 50
+            """
+
+            results = self.db.fetch_all(sql_fuzzy, (year, like_pattern))
 
             if not results:
                 return None
@@ -272,111 +295,6 @@ class EnrichedPaperRepository:
             self.logger.error(f"Failed to query paper from dataset: {e}")
             return None
 
-    def query_papers_from_dataset_batch(self, papers: List[Tuple[str, int]]) -> Dict[Tuple[str, int], Optional[Dict]]:
-        """
-        Batch query papers from partitioned dataset_papers table by title and year
-
-        Args:
-            papers: List of tuples (title, year) to search for
-
-        Returns:
-            Dictionary mapping (title, year) to paper data if found, None otherwise
-
-        Note:
-            - Queries the specific year partition for performance
-            - Returns raw S2 data structure from dataset_papers
-            - Uses case-insensitive exact matching for batch performance
-        """
-        try:
-            if not papers:
-                return {}
-
-            # Initialize result dictionary with None values
-            results = {(title, year): None for title, year in papers}
-
-            # Filter valid papers
-            valid_papers = []
-            for title, year in papers:
-                if not title or not title.strip():
-                    continue
-                if not year or year == 0:
-                    continue
-                valid_papers.append((title.strip(), year))
-
-            if not valid_papers:
-                return results
-
-            # Group papers by year for partition pruning
-            papers_by_year = {}
-            for title, year in valid_papers:
-                if year not in papers_by_year:
-                    papers_by_year[year] = []
-                papers_by_year[year].append(title)
-
-            # Query each year group separately
-            for year, titles in papers_by_year.items():
-                if not titles:
-                    continue
-
-                # Build SQL query with IN clause for exact matching
-                placeholders = ', '.join(['%s'] * len(titles))
-                sql = f"""
-                SELECT
-                    corpus_id,
-                    paper_id,
-                    external_ids,
-                    title,
-                    abstract,
-                    venue,
-                    year,
-                    citation_count,
-                    reference_count,
-                    influential_citation_count,
-                    authors,
-                    fields_of_study,
-                    publication_types,
-                    is_open_access,
-                    open_access_pdf
-                FROM dataset_papers
-                WHERE year = %s
-                AND title IN ({placeholders})
-                """
-
-                # Execute query
-                batch_results = self.db.fetch_all(sql, (year, placeholders))
-                
-                self.logger.info(f"Batch query for year {year}: titles： {placeholders} ")
-
-
-
-                self.logger.info(f"Batch query for year {year}: found {len(batch_results)} matches for {len(titles)} titles")
-
-                # Create mapping from original title to result
-                title_to_result = {}
-                for row in batch_results:
-                    if row['title']:
-                        # Use original title for exact matching
-                        title_to_result[row['title']] = dict(row)
-
-                # Match results back to original papers using exact matching
-                for original_title, year in valid_papers:
-                    # Try exact match (case-sensitive)
-                    if original_title in title_to_result:
-                        result = title_to_result[original_title]
-                        similarity = 1.0  # Exact match
-                        result['_title_similarity'] = similarity
-                        results[(original_title, year)] = result
-                        self.logger.debug(f"Exact match found: '{original_title}' -> '{result['title']}'")
-                    else:
-                        self.logger.debug(f"No exact match found for: '{original_title}' (year: {year})")
-
-            return results
-
-        except Exception as e:
-            self.logger.error(f"Failed to batch query papers from dataset: {e}")
-            # Return empty results for all papers on error
-            return {(title, year): None for title, year in papers}
-
     def get_papers_needing_s2_enrichment(self, limit: int = None) -> List[Tuple[int, DBLP_Paper]]:
         """Get DBLP papers that need S2 enrichment (both conditions: new/changed papers without S2 data)"""
         try:
@@ -390,7 +308,7 @@ class EnrichedPaperRepository:
             WHERE ep.id IS NULL 
                OR dp.update_time > ep.updated_at
                OR ep.semantic_paper_id IS NULL
-            ORDER BY dp.year
+            ORDER BY dp.update_time DESC, dp.id
             """
             
             if limit:
