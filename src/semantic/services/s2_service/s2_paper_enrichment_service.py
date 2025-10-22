@@ -194,16 +194,19 @@ class ConcurrentPaperProcessor:
         self.statistics = statistics
 
     def process_papers_concurrently(self, papers, processor_func):
-        """Process papers concurrently with a thread pool"""
+        """Process papers concurrently with a thread pool and return results"""
+        results = {}
         with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
             futures = {executor.submit(processor_func, paper): paper for paper in papers}
             for future in as_completed(futures):
                 paper = futures[future]
                 try:
-                    future.result()
+                    results[paper] = future.result()
                 except Exception as e:
                     self.logger.error(f"Failed to process paper {paper.title}: {e}")
                     self.statistics['errors'] += 1
+                    results[paper] = False
+        return results
 
 
 class EnrichmentReporter:
@@ -511,7 +514,8 @@ class S2EnrichmentService:
                     # 使用 ConcurrentPaperProcessor 并发处理
                     concurrent_processor = ConcurrentPaperProcessor(self.logger, self.statistics)
                     processor_func = lambda paper: self._process_single_paper(paper)
-                    concurrent_processor.process_papers_concurrently([dblp_paper], processor_func)
+                    results = concurrent_processor.process_papers_concurrently([dblp_paper], processor_func)
+                    success = results[dblp_paper]
 
                     if success:
                         self.statistics.increment('papers_processed')
