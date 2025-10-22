@@ -166,8 +166,9 @@ CREATE TABLE IF NOT EXISTS dataset_papers_2031_plus PARTITION OF dataset_papers
 -- Create indexes on parent table (automatically propagate to all partitions)
 -- ============================================================================
 
--- Primary key constraint (corpus_id is effectively our unique identifier)
-CREATE UNIQUE INDEX IF NOT EXISTS idx_dataset_papers_corpus_id ON dataset_papers(corpus_id);
+-- Query optimization index (corpus_id is our primary identifier)
+-- Note: Cannot use UNIQUE constraint on partitioned table without including partition key (year)
+CREATE INDEX IF NOT EXISTS idx_dataset_papers_corpus_id ON dataset_papers(corpus_id);
 
 -- Query optimization indexes
 CREATE INDEX IF NOT EXISTS idx_dataset_papers_venue ON dataset_papers(venue);
