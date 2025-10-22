@@ -188,7 +188,7 @@ class PaperProcessor:
 class ConcurrentPaperProcessor:
     """Handles concurrent paper processing with thread pooling"""
 
-    def __init__(self, logger: logging.Logger, statistics: Dict[str, int]):
+    def __init__(self, logger: logging.Logger, statistics: ProcessingStatistics):
         self.max_workers = 5
         self.logger = logger
         self.statistics = statistics
@@ -204,7 +204,7 @@ class ConcurrentPaperProcessor:
                     results[paper] = future.result()
                 except Exception as e:
                     self.logger.error(f"Failed to process paper {paper.title}: {e}")
-                    self.statistics['errors'] += 1
+                    self.statistics.increment('errors')
                     results[paper] = False
         return results
 
