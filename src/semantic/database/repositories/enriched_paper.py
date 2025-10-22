@@ -295,6 +295,101 @@ class EnrichedPaperRepository:
             self.logger.error(f"Failed to query paper from dataset: {e}")
             return None
 
+    def query_papers_from_dataset_batch(self, papers: List[Tuple[str, int]]) -> Dict[Tuple[str, int], Optional[Dict]]:
+        """
+        Batch query papers from partitioned dataset_papers table by title and year
+
+        Args:
+            papers: List of tuples (title, year) to search for
+
+        Returns:
+            Dictionary mapping (title, year) to paper data if found, None otherwise
+
+        Note:
+            - Queries the specific year partition for performance
+            - Returns raw S2 data structure from dataset_papers
+            - Uses case-insensitive exact matching for batch performance
+        """
+        try:
+            if not papers:
+                return {}
+
+            # Group papers by year for partition pruning
+            papers_by_year = {}
+            for title, year in papers:
+                if not title or not title.strip():
+                    continue
+                if year not in papers_by_year:
+                    papers_by_year[year] = []
+                papers_by_year[year].append(title.strip().lower())
+
+            # Initialize result dictionary
+            results = {}
+
+            # Query each year group separately
+            for year, titles in papers_by_year.items():
+                if not titles:
+                    continue
+
+                # Build SQL query with IN clause for exact matching
+                placeholders = ', '.join(['%s'] * len(titles))
+                sql = f"""
+                SELECT
+                    corpus_id,
+                    paper_id,
+                    external_ids,
+                    title,
+                    abstract,
+                    venue,
+                    year,
+                    citation_count,
+                    reference_count,
+                    influential_citation_count,
+                    authors,
+                    fields_of_study,
+                    publication_types,
+                    is_open_access,
+                    open_access_pdf
+                FROM dataset_papers
+                WHERE year = %s
+                AND title IN ({placeholders})
+                """
+
+                # Execute query
+                params = [year] + titles
+                batch_results = self.db.fetch_all(sql, params)
+
+                # Create mapping from normalized title to result
+                title_to_result = {}
+                for row in batch_results:
+                    if row['title']:
+                        title_to_result[row['title'].lower()] = dict(row)
+
+                # Match results back to original papers
+                for title, year in papers:
+                    if not title or not title.strip():
+                        results[(title, year)] = None
+                        continue
+
+                    normalized_title = title.strip().lower()
+                    if normalized_title in title_to_result:
+                        result = title_to_result[normalized_title]
+                        # Calculate similarity for logging
+                        from ...services.s2_service.s2_service import S2ValidationService
+                        validator = S2ValidationService()
+                        similarity = validator.calculate_title_similarity(title, result['title'])
+                        result['_title_similarity'] = similarity
+                        results[(title, year)] = result
+                    else:
+                        results[(title, year)] = None
+
+            return results
+
+        except Exception as e:
+            self.logger.error(f"Failed to batch query papers from dataset: {e}")
+            # Return empty results for all papers on error
+            return {(title, year): None for title, year in papers}
+
     def get_papers_needing_s2_enrichment(self, limit: int = None) -> List[Tuple[int, DBLP_Paper]]:
         """Get DBLP papers that need S2 enrichment (both conditions: new/changed papers without S2 data)"""
         try:
@@ -308,7 +403,7 @@ class EnrichedPaperRepository:
             WHERE ep.id IS NULL 
                OR dp.update_time > ep.updated_at
                OR ep.semantic_paper_id IS NULL
-            ORDER BY dp.update_time DESC, dp.id
+            ORDER BY db.year
             """
             
             if limit:
