@@ -189,6 +189,7 @@ class EnrichedPaperSchema:
             records_processed INTEGER DEFAULT 0,
             records_inserted INTEGER DEFAULT 0,
             records_updated INTEGER DEFAULT 0,
+            records_tier1 INTEGER DEFAULT 0,
             records_tier2 INTEGER DEFAULT 0,
             records_tier3 INTEGER DEFAULT 0,
             api_calls_made INTEGER DEFAULT 0,
@@ -225,10 +226,47 @@ class EnrichedPaperSchema:
                     self.logger.warning(f"Failed to create trigger: {trigger_sql[:50]}...")
             
             self.logger.info("Enriched papers schema created successfully")
+
+            # Ensure records_tier1 column exists (for backward compatibility)
+            self.ensure_tier1_column()
+
             return True
-            
+
         except Exception as e:
             self.logger.error(f"Failed to create enriched_papers schema: {e}")
+            return False
+
+    def ensure_tier1_column(self) -> bool:
+        """Ensure records_tier1 column exists in s2_processing_meta table"""
+        try:
+            # Check if column exists
+            check_sql = """
+            SELECT column_name
+            FROM information_schema.columns
+            WHERE table_name = 's2_processing_meta'
+            AND column_name = 'records_tier1'
+            """
+            result = self.db_manager.fetch_one(check_sql)
+
+            if not result:
+                # Add column if it doesn't exist
+                self.logger.info("Adding records_tier1 column to s2_processing_meta table...")
+                alter_sql = """
+                ALTER TABLE s2_processing_meta
+                ADD COLUMN IF NOT EXISTS records_tier1 INTEGER DEFAULT 0
+                """
+                if self.db_manager.execute_query(alter_sql):
+                    self.logger.info("Successfully added records_tier1 column")
+                    return True
+                else:
+                    self.logger.warning("Failed to add records_tier1 column")
+                    return False
+            else:
+                self.logger.info("records_tier1 column already exists")
+                return True
+
+        except Exception as e:
+            self.logger.warning(f"Error ensuring tier1 column exists: {e}")
             return False
     
     def get_field_count_summary(self) -> Dict[str, int]:

@@ -6,7 +6,7 @@ Main service for enriching papers with S2 data using 2-tier validation strategy
 import os
 import logging
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Dict, Optional, Any
 
 from ...database.connection import DatabaseManager, get_db_manager
@@ -29,6 +29,7 @@ class ProcessingStatistics:
             'papers_processed': 0,
             'papers_inserted': 0,
             'papers_updated': 0,
+            'tier1_matches': 0,
             'tier2_matches': 0,
             'tier3_no_matches': 0,
             'api_calls_made': 0,
@@ -51,14 +52,71 @@ class ProcessingStatistics:
 
 class PaperProcessor:
     """Handles the core paper processing logic"""
-    
-    def __init__(self, s2_api: SemanticScholarAPI, s2_parser: S2DataParser, 
-                 validator: S2ValidationService, logger: logging.Logger):
+
+    def __init__(self, s2_api: SemanticScholarAPI, s2_parser: S2DataParser,
+                 validator: S2ValidationService, enriched_repo, logger: logging.Logger):
         self.s2_api = s2_api
         self.s2_parser = s2_parser
         self.validator = validator
+        self.enriched_repo = enriched_repo
         self.logger = logger
-    
+
+    def try_tier1_database_matching(self, dblp_paper: DBLP_Paper) -> Optional[EnrichedPaper]:
+        """Try Tier 1 database matching for a single paper from dataset_papers table"""
+        try:
+            if not dblp_paper.title or not dblp_paper.title.strip():
+                return None
+
+            # Convert year to int for database query
+            year = None
+            if dblp_paper.year:
+                try:
+                    year = int(dblp_paper.year)
+                except (ValueError, TypeError):
+                    self.logger.warning(f"Invalid year format for paper {dblp_paper.key}: {dblp_paper.year}")
+                    return None
+
+            # Skip database lookup if year is None or 0 (as per user requirement)
+            if not year or year == 0:
+                return None
+
+            # Query dataset_papers table
+            dataset_result = self.enriched_repo.query_paper_from_dataset(dblp_paper.title, year)
+
+            if dataset_result:
+                # Extract similarity score
+                similarity = dataset_result.get('_title_similarity', 0.0)
+
+                # Create enriched paper
+                enriched_paper = EnrichedPaper()
+                enriched_paper.merge_dblp_data(dblp_paper)
+
+                # Parse and merge dataset_papers data (same structure as S2 data)
+                parsed_dataset_data = self.s2_parser.parse_s2_response(dataset_result)
+                enriched_paper.merge_s2_data(parsed_dataset_data)
+
+                # Set validation metadata
+                match_method = f'Database Match (similarity: {similarity:.3f})'
+                enriched_paper.match_method = match_method
+                enriched_paper.match_confidence = similarity
+
+                # Determine tier based on similarity
+                if similarity >= 0.85:
+                    enriched_paper.validation_tier = 'Tier1_DatasetMatch_High'
+                else:
+                    enriched_paper.validation_tier = 'Tier1_DatasetMatch_Medium'
+
+                enriched_paper.data_source_primary = 'DATASET+DBLP'
+                enriched_paper.data_completeness_score = self.validator.calculate_completeness_score(enriched_paper.to_dict())
+
+                return enriched_paper
+
+            return None
+
+        except Exception as e:
+            self.logger.error(f"Tier 1 database matching failed for {dblp_paper.key}: {e}")
+            return None
+
     def try_tier2_matching(self, dblp_paper: DBLP_Paper) -> Optional[EnrichedPaper]:
         """Try Tier 2 title-based matching for a single paper"""
         try:
@@ -148,7 +206,8 @@ class EnrichmentReporter:
         self.logger.info(f"Papers processed: {stats['papers_processed']}")
         self.logger.info(f"Papers inserted: {stats['papers_inserted']}")
         self.logger.info(f"Papers updated: {stats['papers_updated']}")
-        self.logger.info(f"Tier 2 matches (Title): {stats['tier2_matches']}")
+        self.logger.info(f"Tier 1 matches (Database): {stats['tier1_matches']}")
+        self.logger.info(f"Tier 2 matches (S2 API): {stats['tier2_matches']}")
         self.logger.info(f"Tier 3 no matches: {stats['tier3_no_matches']}")
         self.logger.info(f"API calls made: {stats['api_calls_made']}")
         self.logger.info(f"Errors: {stats['errors']}")
@@ -210,6 +269,7 @@ class EnrichmentReporter:
                     "papers_processed": stats.get('papers_processed', 0),
                     "papers_inserted": stats.get('papers_inserted', 0),
                     "papers_updated": stats.get('papers_updated', 0),
+                    "tier1_matches": stats.get('tier1_matches', 0),
                     "tier2_matches": stats.get('tier2_matches', 0),
                     "tier3_no_matches": stats.get('tier3_no_matches', 0),
                     "api_calls_made": stats.get('api_calls_made', 0),
@@ -339,6 +399,7 @@ class DatabaseSetupManager:
             records_processed=stats['papers_processed'],
             records_inserted=stats['papers_inserted'],
             records_updated=stats['papers_updated'],
+            records_tier1=stats['tier1_matches'],
             records_tier2=stats['tier2_matches'],
             records_tier3=stats['tier3_no_matches'],
             api_calls_made=stats['api_calls_made'],
@@ -365,7 +426,7 @@ class S2EnrichmentService:
         
         # Initialize component classes
         self.statistics = ProcessingStatistics()
-        self.processor = PaperProcessor(self.s2_api, self.s2_parser, self.validator, self.logger)
+        self.processor = PaperProcessor(self.s2_api, self.s2_parser, self.validator, self.enriched_repo, self.logger)
         self.reporter = EnrichmentReporter(self.enriched_repo, self.logger)
         self.db_manager_component = DatabaseSetupManager(self.enriched_repo, self.logger)
         
@@ -417,25 +478,61 @@ class S2EnrichmentService:
             
             self.logger.info(f"Found {len(papers_to_enrich)} papers to enrich")
             self.logger.info("Processing papers individually...")
-            
+
             # Step 3: Process each paper individually
+            total_papers = len(papers_to_enrich)
+            progress_interval = min(100, max(10, total_papers // 20))  # Show progress every 5% or at least every 100 papers
+
             for i, (dblp_id, dblp_paper) in enumerate(papers_to_enrich, 1):
                 try:
-                    # Log progress
-                    if i % 10 == 0 or i == 1 or i == len(papers_to_enrich):
-                        self.logger.info(f"Processing paper {i}/{len(papers_to_enrich)}: {dblp_paper.title[:50]}...")
-                    
                     # Process single paper
                     success = self._process_single_paper(dblp_paper)
-                    
+
                     if success:
                         self.statistics.increment('papers_processed')
                     else:
                         self.statistics.increment('errors')
-                        
+
                     # Update stats for backward compatibility
                     self.stats = self.statistics.get_all()
-                        
+
+                    # Show progress with estimated time remaining
+                    if i % progress_interval == 0 or i == 1 or i == total_papers:
+                        elapsed_time = time.time() - self.start_time.timestamp()
+                        avg_time_per_paper = elapsed_time / i if i > 0 else 0
+                        remaining_papers = total_papers - i
+                        estimated_remaining_seconds = remaining_papers * avg_time_per_paper
+
+                        # Format times
+                        elapsed_formatted = str(timedelta(seconds=int(elapsed_time)))
+                        remaining_formatted = str(timedelta(seconds=int(estimated_remaining_seconds)))
+
+                        # Calculate processing speed
+                        papers_per_hour = (i / elapsed_time * 3600) if elapsed_time > 0 else 0
+
+                        # Get current stats
+                        current_stats = self.statistics.get_all()
+                        tier1_count = current_stats.get('tier1_matches', 0)
+                        tier2_count = current_stats.get('tier2_matches', 0)
+                        tier3_count = current_stats.get('tier3_no_matches', 0)
+
+                        # Calculate percentages
+                        progress_pct = (i / total_papers * 100) if total_papers > 0 else 0
+                        tier1_pct = (tier1_count / i * 100) if i > 0 else 0
+
+                        self.logger.info(f"Progress: {i}/{total_papers} ({progress_pct:.1f}%) | "
+                                       f"Speed: {papers_per_hour:.0f} papers/hour | "
+                                       f"Elapsed: {elapsed_formatted} | "
+                                       f"Remaining: {remaining_formatted}")
+                        self.logger.info(f"  Tier1(DB): {tier1_count} ({tier1_pct:.1f}%) | "
+                                       f"Tier2(API): {tier2_count} | "
+                                       f"Tier3(NoMatch): {tier3_count} | "
+                                       f"Errors: {current_stats.get('errors', 0)}")
+
+                    # Simple progress indicator for every 10 papers
+                    elif i % 10 == 0:
+                        self.logger.info(f"Processing paper {i}/{total_papers}: {dblp_paper.title[:50]}...")
+
                     # Small delay to avoid overwhelming the API
                     if i % 100 == 0:  # Every 100 papers, take a longer break
                         time.sleep(2)
@@ -443,7 +540,7 @@ class S2EnrichmentService:
                         time.sleep(0.5)
                     else:
                         time.sleep(0.1)  # Small delay between papers
-                        
+
                 except Exception as e:
                     self.logger.error(f"Error processing paper {dblp_paper.key}: {e}")
                     self.statistics.increment('errors')
@@ -466,16 +563,20 @@ class S2EnrichmentService:
             return False
     
     def _process_single_paper(self, dblp_paper: DBLP_Paper) -> bool:
-        """Process a single paper through the 2-tier enrichment process"""
+        """Process a single paper through the 3-tier enrichment process"""
         try:
-            # Step 1: Try Tier 2 (title-based matching)
-            enriched_paper = self._try_tier2_matching(dblp_paper)
-            
-            # Step 2: If Tier 2 failed, create Tier 3 (no match)
+            # Step 1: Try Tier 1 (database matching from dataset_papers)
+            enriched_paper = self._try_tier1_database_matching(dblp_paper)
+
+            # Step 2: If Tier 1 failed, try Tier 2 (S2 API title-based matching)
+            if not enriched_paper:
+                enriched_paper = self._try_tier2_matching(dblp_paper)
+
+            # Step 3: If Tier 2 also failed, create Tier 3 (no match)
             if not enriched_paper:
                 enriched_paper = self._create_tier3_paper(dblp_paper)
-            
-            # Step 3: Save to database immediately
+
+            # Step 4: Save to database immediately
             if enriched_paper:
                 # Check if paper already exists before inserting to determine operation type
                 existing_paper = self.enriched_repo.get_enriched_paper_by_dblp_id(dblp_paper.id)
@@ -498,7 +599,14 @@ class S2EnrichmentService:
         except Exception as e:
             self.logger.error(f"Error processing single paper {dblp_paper.key}: {e}")
             return False
-    
+
+    def _try_tier1_database_matching(self, dblp_paper: DBLP_Paper) -> Optional[EnrichedPaper]:
+        """Try Tier 1 database matching for a single paper"""
+        result = self.processor.try_tier1_database_matching(dblp_paper)
+        if result:
+            self.statistics.increment('tier1_matches')
+        return result
+
     def _try_tier2_matching(self, dblp_paper: DBLP_Paper) -> Optional[EnrichedPaper]:
         """Try Tier 2 title-based matching for a single paper"""
         result = self.processor.try_tier2_matching(dblp_paper)

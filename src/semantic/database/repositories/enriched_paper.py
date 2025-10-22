@@ -166,7 +166,135 @@ class EnrichedPaperRepository:
         except Exception as e:
             self.logger.error(f"Failed to get enriched paper: {e}")
             return None
-    
+
+    def query_paper_from_dataset(self, title: str, year: int) -> Optional[Dict]:
+        """
+        Query paper from partitioned dataset_papers table by title and year
+
+        Args:
+            title: Paper title to search for
+            year: Paper year (used for partition pruning)
+
+        Returns:
+            Dictionary with paper data if found, None otherwise
+
+        Note:
+            - Queries the specific year partition for performance
+            - Returns raw S2 data structure from dataset_papers
+            - Uses case-insensitive LIKE matching for better performance
+        """
+        try:
+            if not title or not title.strip():
+                return None
+
+            # Normalize title for matching
+            title_normalized = title.strip().lower()
+
+            # First try exact case-insensitive match (fastest)
+            sql_exact = """
+            SELECT
+                corpus_id,
+                paper_id,
+                external_ids,
+                title,
+                abstract,
+                venue,
+                year,
+                citation_count,
+                reference_count,
+                influential_citation_count,
+                authors,
+                fields_of_study,
+                publication_types,
+                is_open_access,
+                open_access_pdf
+            FROM dataset_papers
+            WHERE year = %s
+            AND title = %s
+            LIMIT 1
+            """
+
+            result = self.db.fetch_one(sql_exact, (year, title_normalized))
+
+            if result:
+                # Exact match found - calculate similarity for logging
+                from ...services.s2_service.s2_service import S2ValidationService
+                validator = S2ValidationService()
+                similarity = validator.calculate_title_similarity(title, result['title'])
+
+                result_dict = dict(result)
+                result_dict['_title_similarity'] = similarity
+                self.logger.info(f"Found dataset match (exact): {title[:50]}... (similarity: {similarity:.3f})")
+                return result_dict
+
+            # If no exact match, try fuzzy matching with first few words
+            # Extract first 3-5 significant words from title for LIKE query
+            words = [w for w in title_normalized.split() if len(w) > 3][:3]
+            if not words:
+                return None
+
+            # Build LIKE pattern with first few words
+            like_pattern = '%' + '%'.join(words[:3]) + '%'
+
+            sql_fuzzy = """
+            SELECT
+                corpus_id,
+                paper_id,
+                external_ids,
+                title,
+                abstract,
+                venue,
+                year,
+                citation_count,
+                reference_count,
+                influential_citation_count,
+                authors,
+                fields_of_study,
+                publication_types,
+                is_open_access,
+                open_access_pdf
+            FROM dataset_papers
+            WHERE year = %s
+            AND LOWER(title) LIKE %s
+            LIMIT 50
+            """
+
+            results = self.db.fetch_all(sql_fuzzy, (year, like_pattern))
+
+            if not results:
+                return None
+
+            # Calculate title similarity for fuzzy match candidates
+            from ...services.s2_service.s2_service import S2ValidationService
+            validator = S2ValidationService()
+
+            best_match = None
+            best_similarity = 0.0
+
+            for row in results:
+                candidate_title = row['title']
+                if not candidate_title:
+                    continue
+
+                similarity = validator.calculate_title_similarity(title, candidate_title)
+
+                if similarity > best_similarity:
+                    best_similarity = similarity
+                    best_match = dict(row)
+
+            # Return match only if similarity meets threshold
+            if best_match and best_similarity >= 0.70:
+                # Add similarity score to result for caller to use
+                best_match['_title_similarity'] = best_similarity
+                self.logger.info(f"Found dataset match (fuzzy): {title[:50]}... (similarity: {best_similarity:.3f})")
+                return best_match
+
+            return None
+
+        except Exception as e:
+            self.logger.error(f"Failed to query paper from dataset: {e}")
+            return None
+
     def get_papers_needing_s2_enrichment(self, limit: int = None) -> List[Tuple[int, DBLP_Paper]]:
         """Get DBLP papers that need S2 enrichment (both conditions: new/changed papers without S2 data)"""
         try:
@@ -273,27 +401,28 @@ class EnrichedPaperRepository:
     
     def record_s2_processing_meta(self, process_type: str, status: str,
                                 records_processed: int = 0, records_inserted: int = 0,
-                                records_updated: int = 0, records_tier2: int = 0,
-                                records_tier3: int = 0, api_calls_made: int = 0,
-                                error_message: str = None, execution_duration: int = None) -> bool:
+                                records_updated: int = 0, records_tier1: int = 0,
+                                records_tier2: int = 0, records_tier3: int = 0,
+                                api_calls_made: int = 0, error_message: str = None,
+                                execution_duration: int = None) -> bool:
         """Record S2 processing metadata"""
         try:
             sql = """
             INSERT INTO s2_processing_meta
             (process_type, last_run_time, status, records_processed,
-             records_inserted, records_updated, records_tier2, records_tier3,
+             records_inserted, records_updated, records_tier1, records_tier2, records_tier3,
              api_calls_made, error_message, execution_duration)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """
 
             params = (
                 process_type, datetime.now(), status, records_processed,
-                records_inserted, records_updated, records_tier2, records_tier3,
+                records_inserted, records_updated, records_tier1, records_tier2, records_tier3,
                 api_calls_made, error_message, execution_duration
             )
-            
+
             return self.db.execute_query(sql, params)
-            
+
         except Exception as e:
             self.logger.error(f"Failed to record S2 processing metadata: {e}")
             return False

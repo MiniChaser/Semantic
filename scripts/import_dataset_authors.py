@@ -24,7 +24,7 @@ from src.semantic.database.connection import DatabaseManager
 from src.semantic.database.repositories.dataset_release import DatasetReleaseRepository
 from src.semantic.database.models.dataset_release import DatasetRelease
 from src.semantic.database.schemas.dataset_release import DatasetReleaseSchema
-from src.semantic.database.schemas.all_authors import AllAuthorsSchema
+from src.semantic.database.schemas.all_authors import DatasetAuthorsSchema
 from src.semantic.services.s2_service.s2_dataset_downloader import S2DatasetDownloader
 from src.semantic.services.dataset_service.s2_all_authors_processor import S2AllAuthorsProcessor
 
@@ -40,10 +40,10 @@ def setup_database_tables(db_manager: DatabaseManager) -> bool:
             print("Error: Failed to create dataset_release table")
             return False
 
-        # Create all_authors table
-        all_authors_schema = AllAuthorsSchema(db_manager)
-        if not all_authors_schema.create_table():
-            print("Error: Failed to create all_authors table")
+        # Create dataset_authors table
+        dataset_authors_schema = DatasetAuthorsSchema(db_manager)
+        if not dataset_authors_schema.create_table():
+            print("Error: Failed to create dataset_authors table")
             return False
 
         print("✓ Database tables ready")
@@ -124,15 +124,15 @@ async def import_all_authors(args, db_manager: DatabaseManager, release_id: str)
     print("Importing ALL authors with OPTIMIZED FAST IMPORT MODE")
     print(f"{'='*80}")
 
-    # Clear all_authors table before import (unless skip-truncate or resume flag is set)
+    # Clear dataset_authors table before import (unless skip-truncate or resume flag is set)
     if args.resume:
         print("\n📝 Resume mode: Skipping files already in database...")
         print("   (Will not truncate table)")
     elif not args.skip_truncate:
-        print("\n⚠️  Clearing all_authors table before import...")
+        print("\n⚠️  Clearing dataset_authors table before import...")
         try:
-            db_manager.execute_query("TRUNCATE TABLE all_authors CASCADE;")
-            print("✓ all_authors table truncated successfully")
+            db_manager.execute_query("TRUNCATE TABLE dataset_authors CASCADE;")
+            print("✓ dataset_authors table truncated successfully")
         except Exception as e:
             print(f"Error truncating table: {e}")
             print("Note: If table doesn't exist, it will be created during import.")
@@ -141,8 +141,8 @@ async def import_all_authors(args, db_manager: DatabaseManager, release_id: str)
 
     # OPTIMIZATION: Drop indexes before bulk import for 5-10x speed improvement
     print("\n🚀 OPTIMIZATION: Dropping indexes for ultra-fast bulk insert...")
-    all_authors_schema = AllAuthorsSchema(db_manager)
-    if not all_authors_schema.drop_indexes():
+    dataset_authors_schema = DatasetAuthorsSchema(db_manager)
+    if not dataset_authors_schema.drop_indexes():
         print("⚠️  Warning: Failed to drop indexes, continuing anyway...")
 
     # Create processor
@@ -163,7 +163,7 @@ async def import_all_authors(args, db_manager: DatabaseManager, release_id: str)
     # OPTIMIZATION: Recreate indexes after bulk import
     if stats.get('status') == 'completed':
         print("\n🔨 Rebuilding indexes (this may take 10-30 minutes for 75M records)...")
-        if not all_authors_schema.recreate_indexes():
+        if not dataset_authors_schema.recreate_indexes():
             print("⚠️  Warning: Failed to recreate some indexes")
             stats['index_recreation_failed'] = True
         else:
@@ -267,7 +267,7 @@ S2 Authors Dataset Import (Optimized for Fast First-Time Import):
   - Supports resume for interrupted imports
 
 IMPORTANT: This script is optimized for first-time import. It will TRUNCATE
-the all_authors table before importing (use --skip-truncate to prevent this).
+the dataset_authors table before importing (use --skip-truncate to prevent this).
 
 Resume Support: Use --resume to automatically skip files that are already
 in the database (based on source_file field). Perfect for interrupted imports!
@@ -302,7 +302,7 @@ Examples:
     parser.add_argument(
         '--skip-truncate',
         action='store_true',
-        help='Skip truncating all_authors table before import (default: truncate)'
+        help='Skip truncating dataset_authors table before import (default: truncate)'
     )
 
     parser.add_argument(
