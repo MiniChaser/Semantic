@@ -210,7 +210,7 @@ class EnrichedPaperRepository:
                 open_access_pdf
             FROM dataset_papers
             WHERE year = %s
-            AND LOWER(title) = %s
+            AND title = %s
             LIMIT 1
             """
 
