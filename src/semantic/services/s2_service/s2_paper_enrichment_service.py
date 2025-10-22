@@ -568,9 +568,9 @@ class S2EnrichmentService:
                                        f"Tier3(NoMatch): {tier3_count} | "
                                        f"Errors: {current_stats.get('errors', 0)}")
 
-                    # Simple progress indicator for every 10 papers
-                    if i % 10 == 0:
-                        self.logger.info(f"Processing paper {i}/{total_papers}: {dblp_paper.title[:50]}...")
+                # Simple progress indicator for every 10 papers
+                if i % 10 == 0:
+                    self.logger.info(f"Processing paper {i}/{total_papers}: {dblp_paper.title[:50]}...")
 
                     # Small delay to avoid overwhelming the API
                     if i % 100 == 0:  # Every 100 papers, take a longer break
