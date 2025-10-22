@@ -403,7 +403,7 @@ class EnrichedPaperRepository:
             WHERE ep.id IS NULL 
                OR dp.update_time > ep.updated_at
                OR ep.semantic_paper_id IS NULL
-            ORDER BY db.year
+            ORDER BY dp.year
             """
             
             if limit:
