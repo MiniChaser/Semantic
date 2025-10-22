@@ -8,6 +8,7 @@ import logging
 import time
 from datetime import datetime, timedelta
 from typing import Dict, Optional, Any
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from ...database.connection import DatabaseManager, get_db_manager
 from ...database.models.paper import DBLP_Paper
@@ -182,6 +183,27 @@ class PaperProcessor:
         except Exception as e:
             self.logger.error(f"Failed to create Tier 3 paper for {dblp_paper.key}: {e}")
             return None
+
+
+class ConcurrentPaperProcessor:
+    """Handles concurrent paper processing with thread pooling"""
+
+    def __init__(self, logger: logging.Logger, statistics: Dict[str, int]):
+        self.max_workers = 5
+        self.logger = logger
+        self.statistics = statistics
+
+    def process_papers_concurrently(self, papers, processor_func):
+        """Process papers concurrently with a thread pool"""
+        with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
+            futures = {executor.submit(processor_func, paper): paper for paper in papers}
+            for future in as_completed(futures):
+                paper = futures[future]
+                try:
+                    future.result()
+                except Exception as e:
+                    self.logger.error(f"Failed to process paper {paper.title}: {e}")
+                    self.statistics['errors'] += 1
 
 
 class EnrichmentReporter:
@@ -486,7 +508,10 @@ class S2EnrichmentService:
             for i, (dblp_id, dblp_paper) in enumerate(papers_to_enrich, 1):
                 try:
                     # Process single paper
-                    success = self._process_single_paper(dblp_paper)
+                    # 使用 ConcurrentPaperProcessor 并发处理
+                    concurrent_processor = ConcurrentPaperProcessor(self.logger, self.statistics)
+                    processor_func = lambda paper: self._process_single_paper(paper)
+                    concurrent_processor.process_papers_concurrently([dblp_paper], processor_func)
 
                     if success:
                         self.statistics.increment('papers_processed')
