@@ -236,30 +236,7 @@ class EnrichedPaperRepository:
             # Build LIKE pattern with first few words
             like_pattern = '%' + '%'.join(words[:3]) + '%'
 
-            sql_fuzzy = """
-            SELECT
-                corpus_id,
-                paper_id,
-                external_ids,
-                title,
-                abstract,
-                venue,
-                year,
-                citation_count,
-                reference_count,
-                influential_citation_count,
-                authors,
-                fields_of_study,
-                publication_types,
-                is_open_access,
-                open_access_pdf
-            FROM dataset_papers
-            WHERE year = %s
-            AND LOWER(title) LIKE %s
-            LIMIT 50
-            """
-
-            results = self.db.fetch_all(sql_fuzzy, (year, like_pattern))
+         
 
             if not results:
                 return None
@@ -366,9 +343,12 @@ class EnrichedPaperRepository:
                 """
 
                 # Execute query
-                params = [year] + titles
-                batch_results = self.db.fetch_all(sql, params)
+                batch_results = self.db.fetch_all(sql, (year, placeholders))
                 
+                self.logger.info(f"Batch query for year {year}: titles： {placeholders} ")
+
+
+
                 self.logger.info(f"Batch query for year {year}: found {len(batch_results)} matches for {len(titles)} titles")
 
                 # Create mapping from original title to result
