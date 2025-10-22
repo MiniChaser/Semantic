@@ -6,6 +6,7 @@ Main service for enriching papers with S2 data using 2-tier validation strategy
 import os
 import logging
 import time
+import json
 from datetime import datetime, timedelta
 from typing import Dict, Optional, Any, Tuple, List
 
@@ -63,6 +64,8 @@ class PaperProcessor:
 
     def try_tier1_database_matching(self, dblp_paper: DBLP_Paper, dataset_results: Dict[Tuple[str, int], Optional[Dict]] = None) -> Optional[EnrichedPaper]:
         """Try Tier 1 database matching for a single paper from dataset_papers table"""
+        self.logger.info(f"DBLP_Paper title match : {dblp_paper.title}")
+
         try:
             if not dblp_paper.title or not dblp_paper.title.strip():
                 return None
@@ -84,9 +87,6 @@ class PaperProcessor:
             dataset_result = None
             if dataset_results is not None:
                 dataset_result = dataset_results.get((dblp_paper.title, year))
-            else:
-                # Fallback to individual query if batch results not provided
-                dataset_result = self.enriched_repo.query_paper_from_dataset(dblp_paper.title, year)
 
             if dataset_result:
                 # Extract similarity score
@@ -574,7 +574,20 @@ class S2EnrichmentService:
                 valid_papers.append((dblp_id, dblp_paper, year))
             
             # Batch query dataset_papers
+            self.logger.info(f"Batch querying {len(papers_to_query)} papers from dataset_papers table...")
             dataset_results = self.enriched_repo.query_papers_from_dataset_batch(papers_to_query)
+            
+            # Log the first dataset result in JSON format for debugging
+            if dataset_results:
+                first_key = next(iter(dataset_results.keys()))
+                first_result = dataset_results[first_key]
+                if first_result:
+                    self.logger.info(f"First dataset result - Key: {first_key}")
+                    self.logger.info(f"First dataset result JSON: {json.dumps(first_result, indent=2, ensure_ascii=False)}")
+            
+            # Log batch query results
+            found_count = sum(1 for result in dataset_results.values() if result is not None)
+            self.logger.info(f"Batch query completed: {found_count}/{len(papers_to_query)} papers found in dataset_papers")
             
             # Step 2: Process each paper in the batch
             for dblp_id, dblp_paper, year in valid_papers:

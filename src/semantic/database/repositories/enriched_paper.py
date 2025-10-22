@@ -368,6 +368,7 @@ class EnrichedPaperRepository:
                 # Execute query
                 params = [year] + titles
                 batch_results = self.db.fetch_all(sql, params)
+                
                 self.logger.info(f"Batch query for year {year}: found {len(batch_results)} matches for {len(titles)} titles")
 
                 # Create mapping from original title to result
