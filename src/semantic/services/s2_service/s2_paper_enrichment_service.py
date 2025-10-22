@@ -6,9 +6,9 @@ Main service for enriching papers with S2 data using 2-tier validation strategy
 import os
 import logging
 import time
+import json
 from datetime import datetime, timedelta
-from typing import Dict, Optional, Any, Tuple, List, Callable
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from typing import Dict, Optional, Any, Tuple, List
 
 from ...database.connection import DatabaseManager, get_db_manager
 from ...database.models.paper import DBLP_Paper
@@ -51,118 +51,6 @@ class ProcessingStatistics:
         return self.stats.get(stat_name, 0)
 
 
-class ConcurrentPaperProcessor:
-    """Handles concurrent processing of papers with 5 threads"""
-    
-    def __init__(self, logger: logging.Logger, statistics: ProcessingStatistics):
-        self.logger = logger
-        self.statistics = statistics
-        self.max_workers = 5
-    
-    def process_papers_concurrently(self, papers_to_enrich: List[Tuple[int, DBLP_Paper]], 
-                                   process_single_paper_func: Callable) -> bool:
-        """
-        Process papers concurrently using ThreadPoolExecutor
-        
-        Args:
-            papers_to_enrich: List of (dblp_id, dblp_paper) tuples
-            process_single_paper_func: Function to process a single paper
-            
-        Returns:
-            True if processing completed successfully
-        """
-        try:
-            total_papers = len(papers_to_enrich)
-            if total_papers == 0:
-                self.logger.info("No papers to process")
-                return True
-            
-            progress_interval = min(100, max(10, total_papers // 20))
-            self.logger.info(f"Starting concurrent processing with {self.max_workers} threads for {total_papers} papers")
-            
-            # Create a thread-safe wrapper for processing single paper
-            def process_paper_wrapper(paper_data):
-                dblp_id, dblp_paper = paper_data
-                try:
-                    success = process_single_paper_func(dblp_paper)
-                    return dblp_paper.key, success, None
-                except Exception as e:
-                    return dblp_paper.key, False, e
-            
-            # Process papers in batches using ThreadPoolExecutor
-            processed_count = 0
-            start_time = time.time()
-            
-            with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
-                # Submit all tasks
-                future_to_paper = {executor.submit(process_paper_wrapper, paper_data): paper_data 
-                                 for paper_data in papers_to_enrich}
-                
-                # Process completed tasks
-                for future in as_completed(future_to_paper):
-                    paper_data = future_to_paper[future]
-                    dblp_id, dblp_paper = paper_data
-                    
-                    try:
-                        paper_key, success, error = future.result()
-                        processed_count += 1
-                        
-                        if success:
-                            self.statistics.increment('papers_processed')
-                        else:
-                            self.statistics.increment('errors')
-                            if error:
-                                self.logger.error(f"Error processing paper {paper_key}: {error}")
-                        
-                        # Show progress with estimated time remaining
-                        if processed_count % progress_interval == 0 or processed_count == 1 or processed_count == total_papers:
-                            elapsed_time = time.time() - start_time
-                            avg_time_per_paper = elapsed_time / processed_count if processed_count > 0 else 0
-                            remaining_papers = total_papers - processed_count
-                            estimated_remaining_seconds = remaining_papers * avg_time_per_paper
-
-                            # Format times
-                            elapsed_formatted = str(timedelta(seconds=int(elapsed_time)))
-                            remaining_formatted = str(timedelta(seconds=int(estimated_remaining_seconds)))
-
-                            # Calculate processing speed
-                            papers_per_hour = (processed_count / elapsed_time * 3600) if elapsed_time > 0 else 0
-
-                            # Get current stats
-                            current_stats = self.statistics.get_all()
-                            tier1_count = current_stats.get('tier1_matches', 0)
-                            tier2_count = current_stats.get('tier2_matches', 0)
-                            tier3_count = current_stats.get('tier3_no_matches', 0)
-
-                            # Calculate percentages
-                            progress_pct = (processed_count / total_papers * 100) if total_papers > 0 else 0
-                            tier1_pct = (tier1_count / processed_count * 100) if processed_count > 0 else 0
-
-                            self.logger.info(f"Progress: {processed_count}/{total_papers} ({progress_pct:.1f}%) | "
-                                           f"Speed: {papers_per_hour:.0f} papers/hour | "
-                                           f"Elapsed: {elapsed_formatted} | "
-                                           f"Remaining: {remaining_formatted}")
-                            self.logger.info(f"  Tier1(DB): {tier1_count} ({tier1_pct:.1f}%) | "
-                                           f"Tier2(API): {tier2_count} | "
-                                           f"Tier3(NoMatch): {tier3_count} | "
-                                           f"Errors: {current_stats.get('errors', 0)}")
-
-                        # Simple progress indicator for every 10 papers
-                        elif processed_count % 10 == 0:
-                            self.logger.info(f"Processing paper {processed_count}/{total_papers}: {dblp_paper.title[:50]}...")
-
-                    except Exception as e:
-                        self.logger.error(f"Unexpected error processing paper {dblp_paper.key}: {e}")
-                        self.statistics.increment('errors')
-            
-            self.logger.info(f"Concurrent processing completed: {processed_count}/{total_papers} papers processed")
-            return True
-            
-        except Exception as e:
-            self.logger.error(f"Concurrent processing failed: {e}")
-            return False
-
-
 class PaperProcessor:
     """Handles the core paper processing logic"""
 
@@ -174,8 +62,10 @@ class PaperProcessor:
         self.enriched_repo = enriched_repo
         self.logger = logger
 
-    def try_tier1_database_matching(self, dblp_paper: DBLP_Paper) -> Optional[EnrichedPaper]:
+    def try_tier1_database_matching(self, dblp_paper: DBLP_Paper, dataset_results: Dict[Tuple[str, int], Optional[Dict]] = None) -> Optional[EnrichedPaper]:
         """Try Tier 1 database matching for a single paper from dataset_papers table"""
+        self.logger.info(f"DBLP_Paper title match : {dblp_paper.title}")
+
         try:
             if not dblp_paper.title or not dblp_paper.title.strip():
                 return None
@@ -193,8 +83,10 @@ class PaperProcessor:
             if not year or year == 0:
                 return None
 
-            # Query dataset_papers table
-            dataset_result = self.enriched_repo.query_paper_from_dataset(dblp_paper.title, year)
+            # Get dataset result from batch query or individual query
+            dataset_result = None
+            if dataset_results is not None:
+                dataset_result = dataset_results.get((dblp_paper.title, year))
 
             if dataset_result:
                 # Extract similarity score
@@ -568,7 +460,7 @@ class S2EnrichmentService:
         return self.db_manager_component.setup_database()
     
     def enrich_papers(self, limit: int = None) -> bool:
-        """Main method to enrich papers with S2 data - processes each paper individually"""
+        """Main method to enrich papers with S2 data - processes papers in batches"""
         self.start_time = datetime.now()
         self.logger.info(f"Starting S2 enrichment process at {self.start_time}")
         
@@ -590,17 +482,51 @@ class S2EnrichmentService:
                 return True
             
             self.logger.info(f"Found {len(papers_to_enrich)} papers to enrich")
-            self.logger.info("Processing papers individually...")
+            self.logger.info("Processing papers in batches...")
 
-            # Step 3: Process papers concurrently using dedicated concurrent processor
-            concurrent_processor = ConcurrentPaperProcessor(self.logger, self.statistics)
-            success = concurrent_processor.process_papers_concurrently(
-                papers_to_enrich, 
-                self._process_single_paper
-            )
+            # Step 3: Group papers by year and process in batches
+            total_papers = len(papers_to_enrich)
             
-            if not success:
-                raise Exception("Concurrent processing failed")
+            # Group papers by year
+            papers_by_year = {}
+            for dblp_id, dblp_paper in papers_to_enrich:
+                year = None
+                if dblp_paper.year:
+                    try:
+                        year = int(dblp_paper.year)
+                    except (ValueError, TypeError):
+                        year = 0  # Invalid year
+                
+                if not year or year == 0:
+                    # Skip papers with invalid year
+                    continue
+                
+                if year not in papers_by_year:
+                    papers_by_year[year] = []
+                papers_by_year[year].append((dblp_id, dblp_paper))
+            
+            # Process each year group in batches
+            processed_count = 0
+            for year, year_papers in papers_by_year.items():
+                self.logger.info(f"Processing {len(year_papers)} papers from year {year}")
+                
+                # Split year papers into batches of max 100
+                batch_size = 100
+                for batch_start in range(0, len(year_papers), batch_size):
+                    batch_end = min(batch_start + batch_size, len(year_papers))
+                    batch_papers = year_papers[batch_start:batch_end]
+                    
+                    self.logger.info(f"Processing batch {batch_start//batch_size + 1} of {len(year_papers)//batch_size + 1} for year {year}")
+                    
+                    # Process the batch
+                    batch_processed = self._process_paper_batch(batch_papers)
+                    processed_count += batch_processed
+                    
+                    # Update progress
+                    self._update_progress(processed_count, total_papers)
+                    
+                    # Small delay between batches
+                    time.sleep(0.5)
             
             # Step 4: Record processing metadata
             self._record_processing_metadata('success')
@@ -617,15 +543,156 @@ class S2EnrichmentService:
             self._record_processing_metadata('failed', str(e))
             return False
     
+    def _process_paper_batch(self, batch_papers: List[Tuple[int, DBLP_Paper]]) -> int:
+        """Process a batch of papers through the 3-tier enrichment process"""
+        try:
+            if not batch_papers:
+                return 0
+            
+            processed_count = 0
+            
+            # Step 1: Batch query dataset_papers for all papers in this batch
+            papers_to_query = []
+            valid_papers = []
+            
+            for dblp_id, dblp_paper in batch_papers:
+                if not dblp_paper.title or not dblp_paper.title.strip():
+                    continue
+                
+                year = None
+                if dblp_paper.year:
+                    try:
+                        year = int(dblp_paper.year)
+                    except (ValueError, TypeError):
+                        year = 0
+                
+                # Skip papers with invalid year
+                if not year or year == 0:
+                    continue
+                
+                papers_to_query.append((dblp_paper.title, year))
+                valid_papers.append((dblp_id, dblp_paper, year))
+            
+            # Batch query dataset_papers
+            self.logger.info(f"Batch querying {len(papers_to_query)} papers from dataset_papers table...")
+            dataset_results = self.enriched_repo.query_papers_from_dataset_batch(papers_to_query)
+            
+            # Log the first dataset result in JSON format for debugging
+            if dataset_results:
+                first_key = next(iter(dataset_results.keys()))
+                first_result = dataset_results[first_key]
+                if first_result:
+                    self.logger.info(f"First dataset result - Key: {first_key}")
+                    self.logger.info(f"First dataset result JSON: {json.dumps(first_result, indent=2, ensure_ascii=False)}")
+            
+            # Log batch query results
+            found_count = sum(1 for result in dataset_results.values() if result is not None)
+            self.logger.info(f"Batch query completed: {found_count}/{len(papers_to_query)} papers found in dataset_papers")
+            
+            # Step 2: Process each paper in the batch
+            for dblp_id, dblp_paper, year in valid_papers:
+                try:
+                    # Step 1: Try Tier 1 (database matching from dataset_papers)
+                    # Pass the entire dataset_results dictionary to the method
+                    enriched_paper = self._try_tier1_database_matching(dblp_paper, dataset_results)
+
+                    # Step 2: If Tier 1 failed, try Tier 2 (S2 API title-based matching)
+                    # if not enriched_paper:
+                    #     enriched_paper = self._try_tier2_matching(dblp_paper)
+
+                    # Step 3: If Tier 2 also failed, create Tier 3 (no match)
+                    if not enriched_paper:
+                        enriched_paper = self._create_tier3_paper(dblp_paper)
+
+                    # Step 4: Save to database immediately
+                    if enriched_paper:
+                        # Check if paper already exists before inserting to determine operation type
+                        existing_paper = self.enriched_repo.get_enriched_paper_by_dblp_id(dblp_paper.id)
+                        is_update = existing_paper is not None
+                        
+                        success = self.enriched_repo.insert_enriched_paper(enriched_paper)
+                        if success:
+                            if is_update:
+                                self.statistics.increment('papers_updated')
+                            else:
+                                self.statistics.increment('papers_inserted')
+                            
+                            self.statistics.increment('papers_processed')
+                            processed_count += 1
+                        else:
+                            self.logger.error(f"Failed to save enriched paper {dblp_paper.key}")
+                            self.statistics.increment('errors')
+                    else:
+                        self.logger.error(f"Failed to create enriched paper for {dblp_paper.key}")
+                        self.statistics.increment('errors')
+                        
+                except Exception as e:
+                    self.logger.error(f"Error processing paper {dblp_paper.key}: {e}")
+                    self.statistics.increment('errors')
+                    continue
+            
+            return processed_count
+                
+        except Exception as e:
+            self.logger.error(f"Error processing paper batch: {e}")
+            return 0
+
+    def _update_progress(self, processed_count: int, total_papers: int):
+        """Update progress information"""
+        if processed_count == 0 or total_papers == 0:
+            return
+        
+        # Update stats for backward compatibility
+        self.stats = self.statistics.get_all()
+        
+        # Show progress with estimated time remaining
+        progress_interval = min(100, max(10, total_papers // 20))  # Show progress every 5% or at least every 100 papers
+        
+        if processed_count % progress_interval == 0 or processed_count == 1 or processed_count == total_papers:
+            elapsed_time = time.time() - self.start_time.timestamp()
+            avg_time_per_paper = elapsed_time / processed_count if processed_count > 0 else 0
+            remaining_papers = total_papers - processed_count
+            estimated_remaining_seconds = remaining_papers * avg_time_per_paper
+
+            # Format times
+            elapsed_formatted = str(timedelta(seconds=int(elapsed_time)))
+            remaining_formatted = str(timedelta(seconds=int(estimated_remaining_seconds)))
+
+            # Calculate processing speed
+            papers_per_hour = (processed_count / elapsed_time * 3600) if elapsed_time > 0 else 0
+
+            # Get current stats
+            current_stats = self.statistics.get_all()
+            tier1_count = current_stats.get('tier1_matches', 0)
+            tier2_count = current_stats.get('tier2_matches', 0)
+            tier3_count = current_stats.get('tier3_no_matches', 0)
+
+            # Calculate percentages
+            progress_pct = (processed_count / total_papers * 100) if total_papers > 0 else 0
+            tier1_pct = (tier1_count / processed_count * 100) if processed_count > 0 else 0
+
+            self.logger.info(f"Progress: {processed_count}/{total_papers} ({progress_pct:.1f}%) | "
+                           f"Speed: {papers_per_hour:.0f} papers/hour | "
+                           f"Elapsed: {elapsed_formatted} | "
+                           f"Remaining: {remaining_formatted}")
+            self.logger.info(f"  Tier1(DB): {tier1_count} ({tier1_pct:.1f}%) | "
+                           f"Tier2(API): {tier2_count} | "
+                           f"Tier3(NoMatch): {tier3_count} | "
+                           f"Errors: {current_stats.get('errors', 0)}")
+
+        # Simple progress indicator for every 10 papers
+        elif processed_count % 10 == 0:
+            self.logger.info(f"Processed {processed_count}/{total_papers} papers...")
+
     def _process_single_paper(self, dblp_paper: DBLP_Paper) -> bool:
-        """Process a single paper through the 3-tier enrichment process"""
+        """Process a single paper through the 3-tier enrichment process (fallback method)"""
         try:
             # Step 1: Try Tier 1 (database matching from dataset_papers)
             enriched_paper = self._try_tier1_database_matching(dblp_paper)
 
             # Step 2: If Tier 1 failed, try Tier 2 (S2 API title-based matching)
-            if not enriched_paper:
-                enriched_paper = self._try_tier2_matching(dblp_paper)
+            # if not enriched_paper:
+            #     enriched_paper = self._try_tier2_matching(dblp_paper)
 
             # Step 3: If Tier 2 also failed, create Tier 3 (no match)
             if not enriched_paper:
@@ -655,9 +722,9 @@ class S2EnrichmentService:
             self.logger.error(f"Error processing single paper {dblp_paper.key}: {e}")
             return False
 
-    def _try_tier1_database_matching(self, dblp_paper: DBLP_Paper) -> Optional[EnrichedPaper]:
+    def _try_tier1_database_matching(self, dblp_paper: DBLP_Paper, dataset_results: Dict[Tuple[str, int], Optional[Dict]] = None) -> Optional[EnrichedPaper]:
         """Try Tier 1 database matching for a single paper"""
-        result = self.processor.try_tier1_database_matching(dblp_paper)
+        result = self.processor.try_tier1_database_matching(dblp_paper, dataset_results)
         if result:
             self.statistics.increment('tier1_matches')
         return result
