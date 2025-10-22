@@ -711,9 +711,9 @@ class S2EnrichmentService:
             self.logger.error(f"Error processing single paper {dblp_paper.key}: {e}")
             return False
 
-    def _try_tier1_database_matching(self, dblp_paper: DBLP_Paper) -> Optional[EnrichedPaper]:
+    def _try_tier1_database_matching(self, dblp_paper: DBLP_Paper, dataset_results: Dict[Tuple[str, int], Optional[Dict]] = None) -> Optional[EnrichedPaper]:
         """Try Tier 1 database matching for a single paper"""
-        result = self.processor.try_tier1_database_matching(dblp_paper)
+        result = self.processor.try_tier1_database_matching(dblp_paper, dataset_results)
         if result:
             self.statistics.increment('tier1_matches')
         return result
