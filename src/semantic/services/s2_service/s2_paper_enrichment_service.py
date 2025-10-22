@@ -6,7 +6,7 @@ Main service for enriching papers with S2 data using 2-tier validation strategy
 import os
 import logging
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Dict, Optional, Any
 
 from ...database.connection import DatabaseManager, get_db_manager
@@ -478,25 +478,61 @@ class S2EnrichmentService:
             
             self.logger.info(f"Found {len(papers_to_enrich)} papers to enrich")
             self.logger.info("Processing papers individually...")
-            
+
             # Step 3: Process each paper individually
+            total_papers = len(papers_to_enrich)
+            progress_interval = min(100, max(10, total_papers // 20))  # Show progress every 5% or at least every 100 papers
+
             for i, (dblp_id, dblp_paper) in enumerate(papers_to_enrich, 1):
                 try:
-                    # Log progress
-                    if i % 10 == 0 or i == 1 or i == len(papers_to_enrich):
-                        self.logger.info(f"Processing paper {i}/{len(papers_to_enrich)}: {dblp_paper.title[:50]}...")
-                    
                     # Process single paper
                     success = self._process_single_paper(dblp_paper)
-                    
+
                     if success:
                         self.statistics.increment('papers_processed')
                     else:
                         self.statistics.increment('errors')
-                        
+
                     # Update stats for backward compatibility
                     self.stats = self.statistics.get_all()
-                        
+
+                    # Show progress with estimated time remaining
+                    if i % progress_interval == 0 or i == 1 or i == total_papers:
+                        elapsed_time = time.time() - self.start_time.timestamp()
+                        avg_time_per_paper = elapsed_time / i if i > 0 else 0
+                        remaining_papers = total_papers - i
+                        estimated_remaining_seconds = remaining_papers * avg_time_per_paper
+
+                        # Format times
+                        elapsed_formatted = str(timedelta(seconds=int(elapsed_time)))
+                        remaining_formatted = str(timedelta(seconds=int(estimated_remaining_seconds)))
+
+                        # Calculate processing speed
+                        papers_per_hour = (i / elapsed_time * 3600) if elapsed_time > 0 else 0
+
+                        # Get current stats
+                        current_stats = self.statistics.get_all()
+                        tier1_count = current_stats.get('tier1_matches', 0)
+                        tier2_count = current_stats.get('tier2_matches', 0)
+                        tier3_count = current_stats.get('tier3_no_matches', 0)
+
+                        # Calculate percentages
+                        progress_pct = (i / total_papers * 100) if total_papers > 0 else 0
+                        tier1_pct = (tier1_count / i * 100) if i > 0 else 0
+
+                        self.logger.info(f"Progress: {i}/{total_papers} ({progress_pct:.1f}%) | "
+                                       f"Speed: {papers_per_hour:.0f} papers/hour | "
+                                       f"Elapsed: {elapsed_formatted} | "
+                                       f"Remaining: {remaining_formatted}")
+                        self.logger.info(f"  Tier1(DB): {tier1_count} ({tier1_pct:.1f}%) | "
+                                       f"Tier2(API): {tier2_count} | "
+                                       f"Tier3(NoMatch): {tier3_count} | "
+                                       f"Errors: {current_stats.get('errors', 0)}")
+
+                    # Simple progress indicator for every 10 papers
+                    elif i % 10 == 0:
+                        self.logger.info(f"Processing paper {i}/{total_papers}: {dblp_paper.title[:50]}...")
+
                     # Small delay to avoid overwhelming the API
                     if i % 100 == 0:  # Every 100 papers, take a longer break
                         time.sleep(2)
@@ -504,7 +540,7 @@ class S2EnrichmentService:
                         time.sleep(0.5)
                     else:
                         time.sleep(0.1)  # Small delay between papers
-                        
+
                 except Exception as e:
                     self.logger.error(f"Error processing paper {dblp_paper.key}: {e}")
                     self.statistics.increment('errors')
