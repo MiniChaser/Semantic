@@ -7,7 +7,8 @@ import os
 import logging
 import time
 from datetime import datetime, timedelta
-from typing import Dict, Optional, Any
+from typing import Dict, Optional, Any, Tuple, List, Callable
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from ...database.connection import DatabaseManager, get_db_manager
 from ...database.models.paper import DBLP_Paper
@@ -48,6 +49,118 @@ class ProcessingStatistics:
     def get(self, stat_name: str) -> int:
         """Get a specific statistic"""
         return self.stats.get(stat_name, 0)
+
+
+class ConcurrentPaperProcessor:
+    """Handles concurrent processing of papers with 5 threads"""
+    
+    def __init__(self, logger: logging.Logger, statistics: ProcessingStatistics):
+        self.logger = logger
+        self.statistics = statistics
+        self.max_workers = 5
+    
+    def process_papers_concurrently(self, papers_to_enrich: List[Tuple[int, DBLP_Paper]], 
+                                   process_single_paper_func: Callable) -> bool:
+        """
+        Process papers concurrently using ThreadPoolExecutor
+        
+        Args:
+            papers_to_enrich: List of (dblp_id, dblp_paper) tuples
+            process_single_paper_func: Function to process a single paper
+            
+        Returns:
+            True if processing completed successfully
+        """
+        try:
+            total_papers = len(papers_to_enrich)
+            if total_papers == 0:
+                self.logger.info("No papers to process")
+                return True
+            
+            progress_interval = min(100, max(10, total_papers // 20))
+            self.logger.info(f"Starting concurrent processing with {self.max_workers} threads for {total_papers} papers")
+            
+            # Create a thread-safe wrapper for processing single paper
+            def process_paper_wrapper(paper_data):
+                dblp_id, dblp_paper = paper_data
+                try:
+                    success = process_single_paper_func(dblp_paper)
+                    return dblp_paper.key, success, None
+                except Exception as e:
+                    return dblp_paper.key, False, e
+            
+            # Process papers in batches using ThreadPoolExecutor
+            processed_count = 0
+            start_time = time.time()
+            
+            with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
+                # Submit all tasks
+                future_to_paper = {executor.submit(process_paper_wrapper, paper_data): paper_data 
+                                 for paper_data in papers_to_enrich}
+                
+                # Process completed tasks
+                for future in as_completed(future_to_paper):
+                    paper_data = future_to_paper[future]
+                    dblp_id, dblp_paper = paper_data
+                    
+                    try:
+                        paper_key, success, error = future.result()
+                        processed_count += 1
+                        
+                        if success:
+                            self.statistics.increment('papers_processed')
+                        else:
+                            self.statistics.increment('errors')
+                            if error:
+                                self.logger.error(f"Error processing paper {paper_key}: {error}")
+                        
+                        # Show progress with estimated time remaining
+                        if processed_count % progress_interval == 0 or processed_count == 1 or processed_count == total_papers:
+                            elapsed_time = time.time() - start_time
+                            avg_time_per_paper = elapsed_time / processed_count if processed_count > 0 else 0
+                            remaining_papers = total_papers - processed_count
+                            estimated_remaining_seconds = remaining_papers * avg_time_per_paper
+
+                            # Format times
+                            elapsed_formatted = str(timedelta(seconds=int(elapsed_time)))
+                            remaining_formatted = str(timedelta(seconds=int(estimated_remaining_seconds)))
+
+                            # Calculate processing speed
+                            papers_per_hour = (processed_count / elapsed_time * 3600) if elapsed_time > 0 else 0
+
+                            # Get current stats
+                            current_stats = self.statistics.get_all()
+                            tier1_count = current_stats.get('tier1_matches', 0)
+                            tier2_count = current_stats.get('tier2_matches', 0)
+                            tier3_count = current_stats.get('tier3_no_matches', 0)
+
+                            # Calculate percentages
+                            progress_pct = (processed_count / total_papers * 100) if total_papers > 0 else 0
+                            tier1_pct = (tier1_count / processed_count * 100) if processed_count > 0 else 0
+
+                            self.logger.info(f"Progress: {processed_count}/{total_papers} ({progress_pct:.1f}%) | "
+                                           f"Speed: {papers_per_hour:.0f} papers/hour | "
+                                           f"Elapsed: {elapsed_formatted} | "
+                                           f"Remaining: {remaining_formatted}")
+                            self.logger.info(f"  Tier1(DB): {tier1_count} ({tier1_pct:.1f}%) | "
+                                           f"Tier2(API): {tier2_count} | "
+                                           f"Tier3(NoMatch): {tier3_count} | "
+                                           f"Errors: {current_stats.get('errors', 0)}")
+
+                        # Simple progress indicator for every 10 papers
+                        elif processed_count % 10 == 0:
+                            self.logger.info(f"Processing paper {processed_count}/{total_papers}: {dblp_paper.title[:50]}...")
+
+                    except Exception as e:
+                        self.logger.error(f"Unexpected error processing paper {dblp_paper.key}: {e}")
+                        self.statistics.increment('errors')
+            
+            self.logger.info(f"Concurrent processing completed: {processed_count}/{total_papers} papers processed")
+            return True
+            
+        except Exception as e:
+            self.logger.error(f"Concurrent processing failed: {e}")
+            return False
 
 
 class PaperProcessor:
@@ -479,73 +592,15 @@ class S2EnrichmentService:
             self.logger.info(f"Found {len(papers_to_enrich)} papers to enrich")
             self.logger.info("Processing papers individually...")
 
-            # Step 3: Process each paper individually
-            total_papers = len(papers_to_enrich)
-            progress_interval = min(100, max(10, total_papers // 20))  # Show progress every 5% or at least every 100 papers
-
-            for i, (dblp_id, dblp_paper) in enumerate(papers_to_enrich, 1):
-                try:
-                    # Process single paper
-                    success = self._process_single_paper(dblp_paper)
-
-                    if success:
-                        self.statistics.increment('papers_processed')
-                    else:
-                        self.statistics.increment('errors')
-
-                    # Update stats for backward compatibility
-                    self.stats = self.statistics.get_all()
-
-                    # Show progress with estimated time remaining
-                    if i % progress_interval == 0 or i == 1 or i == total_papers:
-                        elapsed_time = time.time() - self.start_time.timestamp()
-                        avg_time_per_paper = elapsed_time / i if i > 0 else 0
-                        remaining_papers = total_papers - i
-                        estimated_remaining_seconds = remaining_papers * avg_time_per_paper
-
-                        # Format times
-                        elapsed_formatted = str(timedelta(seconds=int(elapsed_time)))
-                        remaining_formatted = str(timedelta(seconds=int(estimated_remaining_seconds)))
-
-                        # Calculate processing speed
-                        papers_per_hour = (i / elapsed_time * 3600) if elapsed_time > 0 else 0
-
-                        # Get current stats
-                        current_stats = self.statistics.get_all()
-                        tier1_count = current_stats.get('tier1_matches', 0)
-                        tier2_count = current_stats.get('tier2_matches', 0)
-                        tier3_count = current_stats.get('tier3_no_matches', 0)
-
-                        # Calculate percentages
-                        progress_pct = (i / total_papers * 100) if total_papers > 0 else 0
-                        tier1_pct = (tier1_count / i * 100) if i > 0 else 0
-
-                        self.logger.info(f"Progress: {i}/{total_papers} ({progress_pct:.1f}%) | "
-                                       f"Speed: {papers_per_hour:.0f} papers/hour | "
-                                       f"Elapsed: {elapsed_formatted} | "
-                                       f"Remaining: {remaining_formatted}")
-                        self.logger.info(f"  Tier1(DB): {tier1_count} ({tier1_pct:.1f}%) | "
-                                       f"Tier2(API): {tier2_count} | "
-                                       f"Tier3(NoMatch): {tier3_count} | "
-                                       f"Errors: {current_stats.get('errors', 0)}")
-
-                    # Simple progress indicator for every 10 papers
-                    elif i % 10 == 0:
-                        self.logger.info(f"Processing paper {i}/{total_papers}: {dblp_paper.title[:50]}...")
-
-                    # Small delay to avoid overwhelming the API
-                    if i % 100 == 0:  # Every 100 papers, take a longer break
-                        time.sleep(2)
-                    elif i % 10 == 0:  # Every 10 papers, take a short break
-                        time.sleep(0.5)
-                    else:
-                        time.sleep(0.1)  # Small delay between papers
-
-                except Exception as e:
-                    self.logger.error(f"Error processing paper {dblp_paper.key}: {e}")
-                    self.statistics.increment('errors')
-                    self.stats = self.statistics.get_all()  # Update stats
-                    continue
+            # Step 3: Process papers concurrently using dedicated concurrent processor
+            concurrent_processor = ConcurrentPaperProcessor(self.logger, self.statistics)
+            success = concurrent_processor.process_papers_concurrently(
+                papers_to_enrich, 
+                self._process_single_paper
+            )
+            
+            if not success:
+                raise Exception("Concurrent processing failed")
             
             # Step 4: Record processing metadata
             self._record_processing_metadata('success')
