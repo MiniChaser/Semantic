@@ -5,10 +5,10 @@
 -- RANGE partitioning by year for better query performance and maintenance.
 --
 -- Partition Strategy:
--- - NULL years (converted to 0 by application): Stored in 0-1969 partition
--- - Historical (0-1969): Single partition (includes NULL years converted to 0)
--- - Historical (1970-1989): Single partition
--- - Historical (1990-2000): Single partition
+-- - NULL years (converted to 0 by application): Stored in 0-1970 partition
+-- - Historical (0-1970): Single partition (includes NULL years converted to 0)
+-- - Historical (1971-1990): Single partition
+-- - Historical (1991-2000): Single partition
 -- - Modern (2001-2030): Annual partitions (30 partitions)
 -- - Future (2031+): MAXVALUE partition
 -- Total: 34 partitions
@@ -59,13 +59,13 @@ CREATE TABLE IF NOT EXISTS dataset_papers_null PARTITION OF dataset_papers
 -- Historical partitions (coarse granularity)
 -- NOTE: This partition includes year=0 (NULL years converted by application)
 CREATE TABLE IF NOT EXISTS dataset_papers_0_1970 PARTITION OF dataset_papers
-    FOR VALUES FROM (0) TO (1970);  -- 0-1969, includes converted NULL years
+    FOR VALUES FROM (0) TO (1971);  -- 0-1970, includes converted NULL years
 
 CREATE TABLE IF NOT EXISTS dataset_papers_1970_1990 PARTITION OF dataset_papers
-    FOR VALUES FROM (1970) TO (1990);  -- 1970-1989
+    FOR VALUES FROM (1971) TO (1991);  -- 1971-1990
 
-CREATE TABLE IF NOT EXISTS dataset_papers_1990_2001 PARTITION OF dataset_papers
-    FOR VALUES FROM (1990) TO (2001);  -- 1990-2000
+CREATE TABLE IF NOT EXISTS dataset_papers_1991_2001 PARTITION OF dataset_papers
+    FOR VALUES FROM (1991) TO (2001);  -- 1991-2000
 
 -- Modern era partitions (annual granularity: 2001-2030)
 CREATE TABLE IF NOT EXISTS dataset_papers_2001 PARTITION OF dataset_papers
