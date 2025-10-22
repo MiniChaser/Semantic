@@ -505,29 +505,38 @@ class S2EnrichmentService:
             self.logger.info(f"Found {len(papers_to_enrich)} papers to enrich")
             self.logger.info("Processing papers individually...")
 
-            # Step 3: Process each paper individually
+            # Step 3: Process papers in batches for true concurrency
             total_papers = len(papers_to_enrich)
+            batch_size = 20  # Process 20 papers at a time
             progress_interval = min(100, max(10, total_papers // 20))  # Show progress every 5% or at least every 100 papers
 
-            for i, (dblp_id, dblp_paper) in enumerate(papers_to_enrich, 1):
-                try:
-                    # Process single paper
-                    # 使用 ConcurrentPaperProcessor 并发处理
-                    concurrent_processor = ConcurrentPaperProcessor(self.logger, self.statistics)
-                    processor_func = lambda paper: self._process_single_paper(paper)
-                    results = concurrent_processor.process_papers_concurrently([dblp_paper], processor_func)
-                    success = results[dblp_paper.key]
-
+            # Convert dict to list of papers
+            papers_list = list(papers_to_enrich.values())
+            
+            # Process papers in batches
+            for batch_start in range(0, total_papers, batch_size):
+                batch_end = min(batch_start + batch_size, total_papers)
+                batch_papers = papers_list[batch_start:batch_end]
+                
+                # Process batch concurrently
+                concurrent_processor = ConcurrentPaperProcessor(self.logger, self.statistics)
+                processor_func = lambda paper: self._process_single_paper(paper)
+                results = concurrent_processor.process_papers_concurrently(batch_papers, processor_func)
+                
+                # Update statistics for the batch
+                for paper in batch_papers:
+                    success = results[paper.key]
                     if success:
                         self.statistics.increment('papers_processed')
                     else:
                         self.statistics.increment('errors')
-
-                    # Update stats for backward compatibility
-                    self.stats = self.statistics.get_all()
-
-                    # Show progress with estimated time remaining
-                    if i % progress_interval == 0 or i == 1 or i == total_papers:
+                
+                # Update stats for backward compatibility
+                self.stats = self.statistics.get_all()
+                
+                # Show progress with estimated time remaining
+                i = batch_end
+                if i % progress_interval == 0 or i == 1 or i == total_papers:
                         elapsed_time = time.time() - self.start_time.timestamp()
                         avg_time_per_paper = elapsed_time / i if i > 0 else 0
                         remaining_papers = total_papers - i
