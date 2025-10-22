@@ -569,7 +569,7 @@ class S2EnrichmentService:
                                        f"Errors: {current_stats.get('errors', 0)}")
 
                     # Simple progress indicator for every 10 papers
-                    elif i % 10 == 0:
+                    if i % 10 == 0:
                         self.logger.info(f"Processing paper {i}/{total_papers}: {dblp_paper.title[:50]}...")
 
                     # Small delay to avoid overwhelming the API
