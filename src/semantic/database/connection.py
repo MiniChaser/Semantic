@@ -167,7 +167,45 @@ class DatabaseManager:
         except Exception as e:
             self.logger.error(f"Batch query execution failed: {e}")
             return False
-    
+
+    def execute_values_query(self, query: str, params_list: List = None, template: str = None, page_size: int = 1000) -> bool:
+        """
+        Execute batch INSERT/UPSERT using psycopg2.extras.execute_values for better performance
+
+        This method is 2-3x faster than execute_batch_query because it generates a single
+        multi-row INSERT instead of multiple individual INSERT statements.
+
+        Args:
+            query: SQL query with %s placeholder for VALUES (e.g., "INSERT INTO table (...) VALUES %s")
+            params_list: List of tuples with parameter values for each row
+            template: Optional template string for values (e.g., "(%s, %s, %s)")
+            page_size: Number of rows per page for execute_values (default: 1000)
+
+        Returns:
+            bool: True if successful, False otherwise
+
+        Example:
+            query = "INSERT INTO table (a, b, c) VALUES %s ON CONFLICT (a) DO UPDATE SET b=EXCLUDED.b"
+            params = [(1, 2, 3), (4, 5, 6)]
+            db.execute_values_query(query, params, template="(%s, %s, %s)")
+        """
+        try:
+            from psycopg2.extras import execute_values
+
+            with self.get_cursor() as cursor:
+                if params_list:
+                    # Process each parameter set for JSON compatibility
+                    processed_params = [
+                        self._process_json_params(params) for params in params_list
+                    ]
+                    execute_values(cursor, query, processed_params, template=template, page_size=page_size)
+                else:
+                    cursor.execute(query)
+                return True
+        except Exception as e:
+            self.logger.error(f"Execute values query failed: {e}")
+            return False
+
     def _process_json_params(self, params):
         """Process parameters to handle JSON objects for JSONB compatibility"""
         if not params:

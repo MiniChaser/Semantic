@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-Stage 2: Filter conference papers from all_papers to dataset_papers table
+Stage 2: Filter conference papers from dataset_all_papers to dataset_papers table
 
-Filters papers by conference venue from the all_papers base table and populates
+Filters papers by conference venue from the dataset_all_papers base table and populates
 the dataset_papers partitioned table with only conference papers.
 
 Table Structure:
@@ -16,7 +16,7 @@ Performance Optimization:
 Features:
 - Intelligent index management for optimal performance
 - SQL-based filtering for efficiency
-- Processes ALL data in all_papers (regardless of release_id)
+- Processes ALL data in dataset_all_papers (regardless of release_id)
 - Conference matching with aliases support
 - Batch processing for memory efficiency
 - Complete timing statistics and throughput metrics
@@ -96,24 +96,24 @@ def setup_database_tables(db_manager: DatabaseManager, drop_indexes: bool = True
 
 def get_release_id_from_all_papers(db_manager: DatabaseManager) -> str:
     """
-    Get a release_id from all_papers table for recording purposes
+    Get a release_id from dataset_all_papers table for recording purposes
     Note: This is only used for marking new records, not for filtering
     """
     try:
-        query = "SELECT release_id FROM all_papers LIMIT 1"
+        query = "SELECT release_id FROM dataset_all_papers LIMIT 1"
         result = db_manager.fetch_one(query)
         if result:
             return result['release_id']
         else:
-            print("Warning: No data found in all_papers table")
+            print("Warning: No data found in dataset_all_papers table")
             return "unknown"
     except Exception as e:
-        print(f"Warning: Could not get release_id from all_papers: {e}")
+        print(f"Warning: Could not get release_id from dataset_all_papers: {e}")
         return "unknown"
 
 
 def filter_conferences(args, db_manager: DatabaseManager):
-    """Filter conference papers from all_papers to dataset_papers"""
+    """Filter conference papers from dataset_all_papers to dataset_papers"""
     print(f"\n{'='*80}")
     print("STAGE 2: Filtering conference papers")
     print(f"{'='*80}")
@@ -121,13 +121,14 @@ def filter_conferences(args, db_manager: DatabaseManager):
     # Get release_id for recording (not for filtering!)
     release_id = get_release_id_from_all_papers(db_manager)
     print(f"Using release_id for new records: {release_id}")
-    print("Note: Processing ALL data in all_papers (not filtering by release_id)")
+    print("Note: Processing ALL data in dataset_all_papers (not filtering by release_id)")
 
     # Create filter service
     filter_service = ConferenceFilterService(db_manager, release_id)
 
-    # Filter and populate
-    stats = filter_service.filter_and_populate_dataset_papers(batch_size=args.batch_size)
+    # Use parallel processing (auto-detect optimal process count)
+    print(f"\n🚀 Using PARALLEL processing (auto-detecting optimal process count)")
+    stats = filter_service.filter_and_populate_parallel(batch_size=args.batch_size)
 
     return stats
 
@@ -192,12 +193,12 @@ def print_statistics(stats: dict, total_time_seconds: float = None):
 def main():
     """Main entry point"""
     parser = argparse.ArgumentParser(
-        description='Stage 2: Filter conference papers from all_papers to dataset_papers table',
+        description='Stage 2: Filter conference papers from dataset_all_papers to dataset_papers table',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Stage 2: Filter Conference Papers
 
-This script filters papers by conference venue from the all_papers base table
+This script filters papers by conference venue from the dataset_all_papers base table
 and populates the dataset_papers PARTITIONED table with only conference papers.
 
 Table Structure:
@@ -213,10 +214,10 @@ resulting in 5-10x faster performance:
 Process:
 1. Create partitioned table if not exists (34 partitions by year)
 2. Drop all 7 indexes from dataset_papers table (if not --keep-indexes)
-3. Bulk insert conference papers from all_papers (uses venue_normalized index)
+3. Bulk insert conference papers from dataset_all_papers (uses venue_normalized index)
 4. Rebuild all indexes in one go (more efficient than per-row updates)
 
-IMPORTANT: This script processes ALL data in the all_papers table, regardless
+IMPORTANT: This script processes ALL data in the dataset_all_papers table, regardless
 of release_id. It does not perform incremental filtering.
 
 Examples:
