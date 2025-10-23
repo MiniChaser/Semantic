@@ -8,7 +8,6 @@ import logging
 import time
 from datetime import datetime, timedelta
 from typing import Dict, Optional, Any
-from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from ...database.connection import DatabaseManager, get_db_manager
 from ...database.models.paper import DBLP_Paper
@@ -573,8 +572,8 @@ class S2EnrichmentService:
             enriched_paper = self._try_tier1_database_matching(dblp_paper)
 
             # Step 2: If Tier 1 failed, try Tier 2 (S2 API title-based matching)
-            if not enriched_paper:
-                enriched_paper = self._try_tier2_matching(dblp_paper)
+            # if not enriched_paper:
+            #     enriched_paper = self._try_tier2_matching(dblp_paper)
 
             # Step 3: If Tier 2 also failed, create Tier 3 (no match)
             if not enriched_paper:

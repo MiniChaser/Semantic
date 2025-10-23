@@ -188,7 +188,7 @@ class EnrichedPaperRepository:
                 return None
 
             # Normalize title for matching
-            title_normalized = title.strip().lower()
+            title_normalized = title.strip().rstrip('.')
 
             # First try exact case-insensitive match (fastest)
             sql_exact = """
@@ -226,69 +226,6 @@ class EnrichedPaperRepository:
                 result_dict['_title_similarity'] = similarity
                 self.logger.info(f"Found dataset match (exact): {title[:50]}... (similarity: {similarity:.3f})")
                 return result_dict
-
-            # If no exact match, try fuzzy matching with first few words
-            # Extract first 3-5 significant words from title for LIKE query
-            words = [w for w in title_normalized.split() if len(w) > 3][:3]
-            if not words:
-                return None
-
-            # Build LIKE pattern with first few words
-            like_pattern = '%' + '%'.join(words[:3]) + '%'
-
-            sql_fuzzy = """
-            SELECT
-                corpus_id,
-                paper_id,
-                external_ids,
-                title,
-                abstract,
-                venue,
-                year,
-                citation_count,
-                reference_count,
-                influential_citation_count,
-                authors,
-                fields_of_study,
-                publication_types,
-                is_open_access,
-                open_access_pdf
-            FROM dataset_papers
-            WHERE year = %s
-            AND LOWER(title) LIKE %s
-            LIMIT 50
-            """
-
-            results = self.db.fetch_all(sql_fuzzy, (year, like_pattern))
-
-            if not results:
-                return None
-
-            # Calculate title similarity for fuzzy match candidates
-            from ...services.s2_service.s2_service import S2ValidationService
-            validator = S2ValidationService()
-
-            best_match = None
-            best_similarity = 0.0
-
-            for row in results:
-                candidate_title = row['title']
-                if not candidate_title:
-                    continue
-
-                similarity = validator.calculate_title_similarity(title, candidate_title)
-
-                if similarity > best_similarity:
-                    best_similarity = similarity
-                    best_match = dict(row)
-
-            # Return match only if similarity meets threshold
-            if best_match and best_similarity >= 0.70:
-                # Add similarity score to result for caller to use
-                best_match['_title_similarity'] = best_similarity
-                self.logger.info(f"Found dataset match (fuzzy): {title[:50]}... (similarity: {best_similarity:.3f})")
-                return best_match
-
             return None
 
         except Exception as e:
@@ -308,7 +245,7 @@ class EnrichedPaperRepository:
             WHERE ep.id IS NULL 
                OR dp.update_time > ep.updated_at
                OR ep.semantic_paper_id IS NULL
-            ORDER BY dp.update_time DESC, dp.id
+            ORDER BY dp.year
             """
             
             if limit:
