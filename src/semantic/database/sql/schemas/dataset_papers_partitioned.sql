@@ -168,7 +168,7 @@ CREATE TABLE IF NOT EXISTS dataset_papers_2031_plus PARTITION OF dataset_papers
 -- Create indexes on parent table (automatically propagate to all partitions)
 -- ============================================================================
 -- Optimized index configuration (5 core indexes):
--- 1. corpus_id - Primary identifier (required for UPSERT and queries)
+-- 1. corpus_id + year - Composite UNIQUE constraint (required for UPSERT with ON CONFLICT)
 -- 2. conference_normalized - Conference filtering (core functionality)
 -- 3. year - Partition key (range queries)
 -- 4. dblp_id - DBLP identifier lookups (partial index for non-NULL values)
@@ -180,9 +180,10 @@ CREATE TABLE IF NOT EXISTS dataset_papers_2031_plus PARTITION OF dataset_papers
 -- - citation_count (can add back for citation-based sorting if needed)
 -- ============================================================================
 
--- Primary identifier index (corpus_id is our primary identifier)
--- Note: Cannot use UNIQUE constraint on partitioned table without including partition key (year)
-CREATE INDEX IF NOT EXISTS idx_dataset_papers_corpus_id ON dataset_papers(corpus_id);
+-- Primary identifier unique constraint (corpus_id + year)
+-- Note: PostgreSQL requires partition key (year) in UNIQUE constraints on partitioned tables
+-- This enables ON CONFLICT (corpus_id, year) in UPSERT operations
+CREATE UNIQUE INDEX IF NOT EXISTS idx_dataset_papers_corpus_id_year ON dataset_papers(corpus_id, year);
 
 -- Core query optimization indexes
 CREATE INDEX IF NOT EXISTS idx_dataset_papers_conference ON dataset_papers(conference_normalized);

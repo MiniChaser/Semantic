@@ -35,14 +35,14 @@ class DatasetPaperSchema:
         Get SQL statements for creating indexes on dataset_papers table (for drop/recreate operations)
 
         Optimized index configuration (5 core indexes):
-        1. corpus_id - Primary identifier
+        1. corpus_id + year - Composite UNIQUE constraint (required for UPSERT)
         2. conference_normalized - Conference filtering
         3. year - Partition key
         4. dblp_id - DBLP identifier lookups (partial index)
         5. authors (GIN) - Author JSONB queries
         """
         return [
-            "CREATE INDEX IF NOT EXISTS idx_dataset_papers_corpus_id ON dataset_papers(corpus_id);",
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_dataset_papers_corpus_id_year ON dataset_papers(corpus_id, year);",
             "CREATE INDEX IF NOT EXISTS idx_dataset_papers_conference ON dataset_papers(conference_normalized);",
             "CREATE INDEX IF NOT EXISTS idx_dataset_papers_year ON dataset_papers(year);",
             "CREATE INDEX IF NOT EXISTS idx_dataset_papers_dblp_id ON dataset_papers(dblp_id) WHERE dblp_id IS NOT NULL;",
@@ -123,17 +123,17 @@ class DatasetPaperSchema:
         """
         Drop non-essential indexes on dataset_papers table for bulk import performance
 
-        IMPORTANT: Keeps corpus_id index for ON CONFLICT to work!
+        IMPORTANT: Keeps composite UNIQUE constraint (corpus_id, year) for ON CONFLICT to work!
         Only drops the 4 secondary indexes that slow down inserts.
 
         WARNING: This will make queries very slow until indexes are recreated!
         """
         try:
             self.logger.info("Dropping non-essential indexes on dataset_papers table for bulk import...")
-            self.logger.info("⚠️  Keeping corpus_id index (required for ON CONFLICT)")
+            self.logger.info("⚠️  Keeping UNIQUE constraint on (corpus_id, year) - required for ON CONFLICT")
 
-            # Drop only 4 secondary indexes (NOT corpus_id index!)
-            # Keep idx_dataset_papers_corpus_id because ON CONFLICT needs it
+            # Drop only 4 secondary indexes (NOT the unique constraint!)
+            # Keep idx_dataset_papers_corpus_id_year because ON CONFLICT needs it
             drop_statements = [
                 "DROP INDEX IF EXISTS idx_dataset_papers_conference CASCADE;",
                 "DROP INDEX IF EXISTS idx_dataset_papers_year CASCADE;",
@@ -150,7 +150,7 @@ class DatasetPaperSchema:
                 self.logger.info(f"✓ Index {idx}/{total} dropped")
 
             self.logger.info("✓ All non-essential indexes dropped successfully")
-            self.logger.info("✓ Kept corpus_id index (needed for ON CONFLICT)")
+            self.logger.info("✓ Kept UNIQUE constraint on (corpus_id, year) - needed for ON CONFLICT")
             self.logger.info("⚠️  Queries will be slow until indexes are recreated!")
             return True
 
@@ -162,7 +162,7 @@ class DatasetPaperSchema:
         """
         Recreate the 4 secondary indexes on dataset_papers table after bulk import
 
-        Note: corpus_id index is kept during import, so only 4 indexes need rebuilding
+        Note: UNIQUE constraint on (corpus_id, year) is kept during import, so only 4 indexes need rebuilding
 
         Optimized index set (5 total, rebuild 4):
         - conference_normalized, year, dblp_id (B-tree, fast)
@@ -176,13 +176,13 @@ class DatasetPaperSchema:
         try:
             self.logger.info("Recreating secondary indexes on dataset_papers table...")
             self.logger.info("Creating 4 indexes (conference, year, dblp_id, authors)")
-            self.logger.info("Note: corpus_id index was kept during import")
+            self.logger.info("Note: UNIQUE constraint on (corpus_id, year) was kept during import")
             self.logger.info("This may take 20-50 minutes for 17M records...")
 
             indexes = self.get_indexes_sql()
 
-            # Filter out corpus_id index (already exists)
-            indexes_to_create = [idx for idx in indexes if 'corpus_id' not in idx.lower()]
+            # Filter out corpus_id_year unique index (already exists)
+            indexes_to_create = [idx for idx in indexes if 'corpus_id_year' not in idx.lower()]
 
             self.logger.info(f"Will recreate {len(indexes_to_create)} secondary indexes")
 

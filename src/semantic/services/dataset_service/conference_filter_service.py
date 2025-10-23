@@ -228,7 +228,7 @@ class ConferenceFilterService:
             ) VALUES (
                 %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
             )
-            ON CONFLICT (corpus_id) DO UPDATE SET
+            ON CONFLICT (corpus_id, year) DO UPDATE SET
                 paper_id = EXCLUDED.paper_id,
                 url = EXCLUDED.url,
                 dblp_id = EXCLUDED.dblp_id,
@@ -288,7 +288,7 @@ class ConferenceFilterService:
                 is_open_access, open_access_pdf, conference_normalized,
                 source_file, release_id
             ) VALUES %s
-            ON CONFLICT (corpus_id) DO UPDATE SET
+            ON CONFLICT (corpus_id, year) DO UPDATE SET
                 paper_id = EXCLUDED.paper_id,
                 url = EXCLUDED.url,
                 dblp_id = EXCLUDED.dblp_id,
@@ -443,7 +443,7 @@ class ConferenceFilterService:
                     is_open_access, open_access_pdf, conference_normalized,
                     source_file, release_id
                 ) VALUES %s
-                ON CONFLICT (corpus_id) DO UPDATE SET
+                ON CONFLICT (corpus_id, year) DO UPDATE SET
                     paper_id = EXCLUDED.paper_id,
                     url = EXCLUDED.url,
                     dblp_id = EXCLUDED.dblp_id,
