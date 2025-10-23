@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 """
-Stage 3: Extract author papers from all_papers to dataset_author_papers table
+Stage 3: Extract author papers from dataset_all_papers to dataset_author_papers table
 
 Extracts all unique authors from dataset_papers (conference papers), then finds
-all papers by these authors in the all_papers table and populates the
+all papers by these authors in the dataset_all_papers table and populates the
 dataset_author_papers table.
 
 Features:
 - Extracts unique authors from conference papers (dataset_papers)
-- Finds all papers by these authors in all_papers (regardless of release_id)
+- Finds all papers by these authors in dataset_all_papers (regardless of release_id)
 - Marks which papers are conference papers (is_conference_paper flag)
 - Batch processing for memory efficiency
 - UPSERT logic for handling existing records
@@ -53,24 +53,24 @@ def setup_database_tables(db_manager: DatabaseManager) -> bool:
 
 def get_release_id_from_all_papers(db_manager: DatabaseManager) -> str:
     """
-    Get a release_id from all_papers table for recording purposes
+    Get a release_id from dataset_all_papers table for recording purposes
     Note: This is only used for marking new records, not for filtering
     """
     try:
-        query = "SELECT release_id FROM all_papers LIMIT 1"
+        query = "SELECT release_id FROM dataset_all_papers LIMIT 1"
         result = db_manager.fetch_one(query)
         if result:
             return result['release_id']
         else:
-            print("Warning: No data found in all_papers table")
+            print("Warning: No data found in dataset_all_papers table")
             return "unknown"
     except Exception as e:
-        print(f"Warning: Could not get release_id from all_papers: {e}")
+        print(f"Warning: Could not get release_id from dataset_all_papers: {e}")
         return "unknown"
 
 
 def extract_author_papers(args, db_manager: DatabaseManager):
-    """Extract author papers from all_papers to dataset_author_papers"""
+    """Extract author papers from dataset_all_papers to dataset_author_papers"""
     print(f"\n{'='*80}")
     print("STAGE 3: Extracting author papers")
     print(f"{'='*80}")
@@ -78,7 +78,7 @@ def extract_author_papers(args, db_manager: DatabaseManager):
     # Get release_id for recording (not for filtering!)
     release_id = get_release_id_from_all_papers(db_manager)
     print(f"Using release_id for new records: {release_id}")
-    print("Note: Processing ALL data in all_papers (not filtering by release_id)")
+    print("Note: Processing ALL data in dataset_all_papers (not filtering by release_id)")
 
     # Create extractor service
     extractor = AuthorPapersExtractor(db_manager, release_id)
@@ -115,25 +115,25 @@ def print_statistics(stats: dict):
 def main():
     """Main entry point"""
     parser = argparse.ArgumentParser(
-        description='Stage 3: Extract author papers from all_papers to dataset_author_papers table',
+        description='Stage 3: Extract author papers from dataset_all_papers to dataset_author_papers table',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Stage 3: Extract Author Papers
 
 This script extracts all unique authors from dataset_papers (conference papers),
-then finds all papers by these authors in the all_papers table and populates
+then finds all papers by these authors in the dataset_all_papers table and populates
 the dataset_author_papers table.
 
-IMPORTANT: This script processes ALL data in the all_papers table, regardless
+IMPORTANT: This script processes ALL data in the dataset_all_papers table, regardless
 of release_id. It does not perform incremental extraction - it always works with
-the complete current state of the all_papers table.
+the complete current state of the dataset_all_papers table.
 
-The release_id stored in new records is obtained from the all_papers table and
+The release_id stored in new records is obtained from the dataset_all_papers table and
 is used only for tracking purposes, not for filtering.
 
 Process:
 1. Extract unique author IDs from dataset_papers (conference papers)
-2. For each author, find ALL their papers in all_papers table
+2. For each author, find ALL their papers in dataset_all_papers table
 3. Mark which papers are conference papers (is_conference_paper = true/false)
 4. Populate dataset_author_papers table with results
 

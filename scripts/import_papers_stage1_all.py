@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-Stage 1: Import ALL papers from S2 dataset to all_papers table
+Stage 1: Import ALL papers from S2 dataset to dataset_all_papers table
 
 Downloads and imports all papers (200M records) from Semantic Scholar dataset
-to the all_papers base table with optimized bulk import performance.
+to the dataset_all_papers base table with optimized bulk import performance.
 
 Features:
 - Downloads latest S2 dataset release (optional)
@@ -55,10 +55,10 @@ def setup_database_tables(db_manager: DatabaseManager) -> bool:
             print("Error: Failed to create dataset_release table")
             return False
 
-        # Create all_papers table (base table for all 200M papers)
+        # Create dataset_all_papers table (base table for all 200M papers)
         all_papers_schema = AllPapersSchema(db_manager)
         if not all_papers_schema.create_table():
-            print("Error: Failed to create all_papers table")
+            print("Error: Failed to create dataset_all_papers table")
             return False
 
         print("✓ Database tables ready")
@@ -139,15 +139,15 @@ async def import_all_papers(args, db_manager: DatabaseManager, release_id: str):
     print("STAGE 1: Importing ALL papers with OPTIMIZED FAST IMPORT MODE")
     print(f"{'='*80}")
 
-    # Clear all_papers table before import (unless skip-truncate or resume flag is set)
+    # Clear dataset_all_papers table before import (unless skip-truncate or resume flag is set)
     if args.resume:
         print("\n📝 Resume mode: Skipping files already in database...")
         print("   (Will not truncate table)")
     elif not args.skip_truncate:
-        print("\n⚠️  Clearing all_papers table before import...")
+        print("\n⚠️  Clearing dataset_all_papers table before import...")
         try:
-            db_manager.execute_query("TRUNCATE TABLE all_papers CASCADE;")
-            print("✓ all_papers table truncated successfully")
+            db_manager.execute_query("TRUNCATE TABLE dataset_all_papers CASCADE;")
+            print("✓ dataset_all_papers table truncated successfully")
         except Exception as e:
             print(f"Error truncating table: {e}")
             print("Note: If table doesn't exist, it will be created during import.")
@@ -272,13 +272,13 @@ async def main_async(args):
 def main():
     """Main entry point"""
     parser = argparse.ArgumentParser(
-        description='Stage 1: Import all papers from S2 dataset to all_papers table',
+        description='Stage 1: Import all papers from S2 dataset to dataset_all_papers table',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Stage 1: Import ALL Papers (Optimized for Performance)
 
 This script downloads and imports all papers (200M records) from Semantic Scholar
-dataset to the all_papers base table with optimized bulk import performance.
+dataset to the dataset_all_papers base table with optimized bulk import performance.
 
 OPTIMIZATIONS (3-5x faster):
   - Drops all indexes before bulk insert
@@ -286,7 +286,7 @@ OPTIMIZATIONS (3-5x faster):
   - Creates only 2 essential indexes (corpus_id, venue_normalized)
   - Skips unnecessary indexes (year, release_id, citation_count, paper_id, authors GIN)
 
-IMPORTANT: This script will TRUNCATE the all_papers table before importing
+IMPORTANT: This script will TRUNCATE the dataset_all_papers table before importing
 (use --skip-truncate to prevent this).
 
 Resume Support: Use --resume to automatically skip files that are already
@@ -331,7 +331,7 @@ Examples:
     parser.add_argument(
         '--skip-truncate',
         action='store_true',
-        help='Skip truncating all_papers table before import (default: truncate)'
+        help='Skip truncating dataset_all_papers table before import (default: truncate)'
     )
 
     parser.add_argument(
