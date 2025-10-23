@@ -28,6 +28,8 @@ CREATE TABLE IF NOT EXISTS dataset_papers (
     id INTEGER NOT NULL DEFAULT nextval('dataset_papers_id_seq'::regclass),
     corpus_id BIGINT NOT NULL,
     paper_id VARCHAR(100),
+    url TEXT,
+    dblp_id VARCHAR(255),
     external_ids JSONB,
     title TEXT NOT NULL,
     abstract TEXT,
@@ -165,17 +167,29 @@ CREATE TABLE IF NOT EXISTS dataset_papers_2031_plus PARTITION OF dataset_papers
 -- ============================================================================
 -- Create indexes on parent table (automatically propagate to all partitions)
 -- ============================================================================
+-- Optimized index configuration (5 core indexes):
+-- 1. corpus_id - Primary identifier (required for UPSERT and queries)
+-- 2. conference_normalized - Conference filtering (core functionality)
+-- 3. year - Partition key (range queries)
+-- 4. dblp_id - DBLP identifier lookups (partial index for non-NULL values)
+-- 5. authors (GIN) - Complex author JSONB queries
+--
+-- Removed indexes (low value, can be recreated later if needed):
+-- - venue (replaced by conference_normalized)
+-- - release_id (rarely queried)
+-- - citation_count (can add back for citation-based sorting if needed)
+-- ============================================================================
 
--- Query optimization index (corpus_id is our primary identifier)
+-- Primary identifier index (corpus_id is our primary identifier)
 -- Note: Cannot use UNIQUE constraint on partitioned table without including partition key (year)
 CREATE INDEX IF NOT EXISTS idx_dataset_papers_corpus_id ON dataset_papers(corpus_id);
 
--- Query optimization indexes
-CREATE INDEX IF NOT EXISTS idx_dataset_papers_venue ON dataset_papers(venue);
+-- Core query optimization indexes
 CREATE INDEX IF NOT EXISTS idx_dataset_papers_conference ON dataset_papers(conference_normalized);
 CREATE INDEX IF NOT EXISTS idx_dataset_papers_year ON dataset_papers(year);
-CREATE INDEX IF NOT EXISTS idx_dataset_papers_release_id ON dataset_papers(release_id);
-CREATE INDEX IF NOT EXISTS idx_dataset_papers_citation_count ON dataset_papers(citation_count);
+
+-- DBLP identifier index (partial index for space efficiency)
+CREATE INDEX IF NOT EXISTS idx_dataset_papers_dblp_id ON dataset_papers(dblp_id) WHERE dblp_id IS NOT NULL;
 
 -- GIN index for JSONB author queries
 CREATE INDEX IF NOT EXISTS idx_dataset_papers_authors ON dataset_papers USING GIN (authors);
