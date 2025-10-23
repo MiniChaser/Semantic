@@ -31,14 +31,21 @@ class DatasetPaperSchema:
         return logger
 
     def get_indexes_sql(self) -> List[str]:
-        """Get SQL statements for creating indexes on dataset_papers table (for drop/recreate operations)"""
+        """
+        Get SQL statements for creating indexes on dataset_papers table (for drop/recreate operations)
+
+        Optimized index configuration (5 core indexes):
+        1. corpus_id - Primary identifier
+        2. conference_normalized - Conference filtering
+        3. year - Partition key
+        4. dblp_id - DBLP identifier lookups (partial index)
+        5. authors (GIN) - Author JSONB queries
+        """
         return [
-            "CREATE UNIQUE INDEX IF NOT EXISTS idx_dataset_papers_corpus_id ON dataset_papers(corpus_id);",
-            "CREATE INDEX IF NOT EXISTS idx_dataset_papers_venue ON dataset_papers(venue);",
+            "CREATE INDEX IF NOT EXISTS idx_dataset_papers_corpus_id ON dataset_papers(corpus_id);",
             "CREATE INDEX IF NOT EXISTS idx_dataset_papers_conference ON dataset_papers(conference_normalized);",
             "CREATE INDEX IF NOT EXISTS idx_dataset_papers_year ON dataset_papers(year);",
-            "CREATE INDEX IF NOT EXISTS idx_dataset_papers_release_id ON dataset_papers(release_id);",
-            "CREATE INDEX IF NOT EXISTS idx_dataset_papers_citation_count ON dataset_papers(citation_count);",
+            "CREATE INDEX IF NOT EXISTS idx_dataset_papers_dblp_id ON dataset_papers(dblp_id) WHERE dblp_id IS NOT NULL;",
             "CREATE INDEX IF NOT EXISTS idx_dataset_papers_authors ON dataset_papers USING GIN (authors);",
         ]
 
@@ -116,23 +123,21 @@ class DatasetPaperSchema:
         """
         Drop non-essential indexes on dataset_papers table for bulk import performance
 
-        IMPORTANT: Keeps corpus_id UNIQUE constraint for ON CONFLICT to work!
-        Only drops the 6 secondary indexes that slow down inserts.
+        IMPORTANT: Keeps corpus_id index for ON CONFLICT to work!
+        Only drops the 4 secondary indexes that slow down inserts.
 
         WARNING: This will make queries very slow until indexes are recreated!
         """
         try:
             self.logger.info("Dropping non-essential indexes on dataset_papers table for bulk import...")
-            self.logger.info("⚠️  Keeping corpus_id UNIQUE constraint (required for ON CONFLICT)")
+            self.logger.info("⚠️  Keeping corpus_id index (required for ON CONFLICT)")
 
-            # Drop only 6 secondary indexes (NOT corpus_id UNIQUE index!)
+            # Drop only 4 secondary indexes (NOT corpus_id index!)
             # Keep idx_dataset_papers_corpus_id because ON CONFLICT needs it
             drop_statements = [
-                "DROP INDEX IF EXISTS idx_dataset_papers_venue CASCADE;",
                 "DROP INDEX IF EXISTS idx_dataset_papers_conference CASCADE;",
                 "DROP INDEX IF EXISTS idx_dataset_papers_year CASCADE;",
-                "DROP INDEX IF EXISTS idx_dataset_papers_release_id CASCADE;",
-                "DROP INDEX IF EXISTS idx_dataset_papers_citation_count CASCADE;",
+                "DROP INDEX IF EXISTS idx_dataset_papers_dblp_id CASCADE;",
                 "DROP INDEX IF EXISTS idx_dataset_papers_authors CASCADE;",
             ]
 
@@ -145,7 +150,7 @@ class DatasetPaperSchema:
                 self.logger.info(f"✓ Index {idx}/{total} dropped")
 
             self.logger.info("✓ All non-essential indexes dropped successfully")
-            self.logger.info("✓ Kept corpus_id UNIQUE index (needed for ON CONFLICT)")
+            self.logger.info("✓ Kept corpus_id index (needed for ON CONFLICT)")
             self.logger.info("⚠️  Queries will be slow until indexes are recreated!")
             return True
 
@@ -155,20 +160,24 @@ class DatasetPaperSchema:
 
     def recreate_indexes(self) -> bool:
         """
-        Recreate the 6 secondary indexes on dataset_papers table after bulk import
+        Recreate the 4 secondary indexes on dataset_papers table after bulk import
 
-        Note: corpus_id UNIQUE index is kept during import, so only 6 indexes need rebuilding
+        Note: corpus_id index is kept during import, so only 4 indexes need rebuilding
+
+        Optimized index set (5 total, rebuild 4):
+        - conference_normalized, year, dblp_id (B-tree, fast)
+        - authors (GIN, slower)
 
         This will take time depending on the number of records:
         - 1M records: ~2-5 minutes
-        - 10M records: ~15-40 minutes
-        - 17M records: ~20-80 minutes (GIN index is slowest)
+        - 10M records: ~10-30 minutes
+        - 17M records: ~20-50 minutes (GIN index takes ~30 minutes)
         """
         try:
             self.logger.info("Recreating secondary indexes on dataset_papers table...")
-            self.logger.info("Creating 6 indexes (venue, conference, year, release_id, citation_count, authors)")
-            self.logger.info("Note: corpus_id UNIQUE index was kept during import")
-            self.logger.info("This may take 20-80 minutes for 17M records...")
+            self.logger.info("Creating 4 indexes (conference, year, dblp_id, authors)")
+            self.logger.info("Note: corpus_id index was kept during import")
+            self.logger.info("This may take 20-50 minutes for 17M records...")
 
             indexes = self.get_indexes_sql()
 
@@ -183,6 +192,8 @@ class DatasetPaperSchema:
                 # Estimate time for each index
                 if "GIN" in index_sql:
                     self.logger.info(f"Creating index {idx}/{len(indexes_to_create)}: idx_dataset_papers_{index_name}... (GIN index - may take 30+ minutes)")
+                elif "dblp_id" in index_sql:
+                    self.logger.info(f"Creating index {idx}/{len(indexes_to_create)}: idx_dataset_papers_{index_name}... (partial index - faster)")
                 else:
                     self.logger.info(f"Creating index {idx}/{len(indexes_to_create)}: idx_dataset_papers_{index_name}...")
 

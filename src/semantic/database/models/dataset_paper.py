@@ -17,6 +17,8 @@ class DatasetPaper:
     venue: str
     release_id: str
     paper_id: Optional[str] = None
+    url: Optional[str] = None
+    dblp_id: Optional[str] = None
     external_ids: Optional[Dict] = None
     abstract: Optional[str] = None
     year: Optional[int] = None
@@ -57,6 +59,8 @@ class DatasetPaper:
             id=data.get('id'),
             corpus_id=data.get('corpus_id'),
             paper_id=data.get('paper_id'),
+            url=data.get('url'),
+            dblp_id=data.get('dblp_id'),
             external_ids=parse_json_field('external_ids'),
             title=data.get('title', ''),
             abstract=data.get('abstract'),
@@ -80,10 +84,15 @@ class DatasetPaper:
     @classmethod
     def from_s2_json(cls, json_obj: Dict, conference: str, source_file: str, release_id: str) -> 'DatasetPaper':
         """Create DatasetPaper object from S2 JSON format"""
+        external_ids = json_obj.get('externalIds', {})
+        dblp_id = external_ids.get('DBLP') if external_ids else None
+
         return cls(
             corpus_id=json_obj.get('corpusId'),
             paper_id=json_obj.get('paperId'),
-            external_ids=json_obj.get('externalIds', {}),
+            url=json_obj.get('url'),
+            dblp_id=dblp_id,
+            external_ids=external_ids,
             title=json_obj.get('title', ''),
             abstract=json_obj.get('abstract'),
             venue=json_obj.get('venue', ''),

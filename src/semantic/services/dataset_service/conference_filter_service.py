@@ -34,6 +34,21 @@ class ConferenceFilterService:
         self.total_inserted = 0
         self.total_updated = 0
 
+    @staticmethod
+    def _extract_dblp_id(external_ids: Dict) -> Optional[str]:
+        """
+        Extract DBLP ID from external_ids JSONB field
+
+        Args:
+            external_ids: Dictionary containing external identifiers
+
+        Returns:
+            DBLP ID string if found, None otherwise
+        """
+        if not external_ids or not isinstance(external_ids, dict):
+            return None
+        return external_ids.get('DBLP')
+
     def _setup_logger(self) -> logging.Logger:
         """Setup logger"""
         logger = logging.getLogger(f'{__name__}.ConferenceFilterService')
@@ -147,11 +162,14 @@ class ConferenceFilterService:
                     last_corpus_id = papers[-1]['corpus_id']
 
                     # venue_normalized is already set, use it directly as conference_normalized
+                    # Extract DBLP ID from external_ids JSONB
                     papers_with_conf = []
                     for paper in papers:
                         paper_with_conf = dict(paper)
                         # Use venue_normalized as conference_normalized (already standardized)
                         paper_with_conf['conference_normalized'] = paper.get('venue_normalized')
+                        # Extract DBLP ID from external_ids
+                        paper_with_conf['dblp_id'] = self._extract_dblp_id(paper.get('external_ids'))
                         papers_with_conf.append(paper_with_conf)
 
                     # Batch upsert papers using INSERT ON CONFLICT
@@ -202,17 +220,18 @@ class ConferenceFilterService:
         try:
             upsert_query = """
             INSERT INTO dataset_papers (
-                corpus_id, paper_id, url, external_ids, title, abstract, venue, year,
+                corpus_id, paper_id, url, dblp_id, external_ids, title, abstract, venue, year,
                 citation_count, reference_count, influential_citation_count,
                 authors, fields_of_study, publication_types,
                 is_open_access, open_access_pdf, conference_normalized,
                 source_file, release_id
             ) VALUES (
-                %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
+                %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
             )
             ON CONFLICT (corpus_id) DO UPDATE SET
                 paper_id = EXCLUDED.paper_id,
                 url = EXCLUDED.url,
+                dblp_id = EXCLUDED.dblp_id,
                 external_ids = EXCLUDED.external_ids,
                 title = EXCLUDED.title,
                 abstract = EXCLUDED.abstract,
@@ -234,7 +253,7 @@ class ConferenceFilterService:
 
             params_list = [
                 (
-                    p['corpus_id'], p.get('paper_id'), p.get('url'), p.get('external_ids'), p['title'],
+                    p['corpus_id'], p.get('paper_id'), p.get('url'), p.get('dblp_id'), p.get('external_ids'), p['title'],
                     p.get('abstract'), p.get('venue_normalized'), p.get('year') or 0, p.get('citation_count', 0),
                     p.get('reference_count', 0), p.get('influential_citation_count', 0),
                     p.get('authors'), p.get('fields_of_study'), p.get('publication_types'),
@@ -263,7 +282,7 @@ class ConferenceFilterService:
             # Build upsert query with %s placeholder for VALUES
             upsert_query = """
             INSERT INTO dataset_papers (
-                corpus_id, paper_id, url, external_ids, title, abstract, venue, year,
+                corpus_id, paper_id, url, dblp_id, external_ids, title, abstract, venue, year,
                 citation_count, reference_count, influential_citation_count,
                 authors, fields_of_study, publication_types,
                 is_open_access, open_access_pdf, conference_normalized,
@@ -272,6 +291,7 @@ class ConferenceFilterService:
             ON CONFLICT (corpus_id) DO UPDATE SET
                 paper_id = EXCLUDED.paper_id,
                 url = EXCLUDED.url,
+                dblp_id = EXCLUDED.dblp_id,
                 external_ids = EXCLUDED.external_ids,
                 title = EXCLUDED.title,
                 abstract = EXCLUDED.abstract,
@@ -293,7 +313,7 @@ class ConferenceFilterService:
 
             params_list = [
                 (
-                    p['corpus_id'], p.get('paper_id'), p.get('url'), p.get('external_ids'), p['title'],
+                    p['corpus_id'], p.get('paper_id'), p.get('url'), p.get('dblp_id'), p.get('external_ids'), p['title'],
                     p.get('abstract'), p.get('venue_normalized'), p.get('year') or 0, p.get('citation_count', 0),
                     p.get('reference_count', 0), p.get('influential_citation_count', 0),
                     p.get('authors'), p.get('fields_of_study'), p.get('publication_types'),
@@ -404,17 +424,20 @@ class ConferenceFilterService:
                 # Update cursor
                 last_corpus_id = papers[-1]['corpus_id']
 
-                # Add conference_normalized field
+                # Add conference_normalized field and extract DBLP ID
                 papers_with_conf = []
                 for paper in papers:
                     paper_with_conf = dict(paper)
                     paper_with_conf['conference_normalized'] = paper.get('venue_normalized')
+                    # Extract DBLP ID from external_ids
+                    external_ids = paper.get('external_ids')
+                    paper_with_conf['dblp_id'] = external_ids.get('DBLP') if external_ids and isinstance(external_ids, dict) else None
                     papers_with_conf.append(paper_with_conf)
 
                 # Fast batch upsert using execute_values
                 upsert_query = """
                 INSERT INTO dataset_papers (
-                    corpus_id, paper_id, url, external_ids, title, abstract, venue, year,
+                    corpus_id, paper_id, url, dblp_id, external_ids, title, abstract, venue, year,
                     citation_count, reference_count, influential_citation_count,
                     authors, fields_of_study, publication_types,
                     is_open_access, open_access_pdf, conference_normalized,
@@ -423,6 +446,7 @@ class ConferenceFilterService:
                 ON CONFLICT (corpus_id) DO UPDATE SET
                     paper_id = EXCLUDED.paper_id,
                     url = EXCLUDED.url,
+                    dblp_id = EXCLUDED.dblp_id,
                     external_ids = EXCLUDED.external_ids,
                     title = EXCLUDED.title,
                     abstract = EXCLUDED.abstract,
@@ -444,7 +468,7 @@ class ConferenceFilterService:
 
                 params_list = [
                     (
-                        p['corpus_id'], p.get('paper_id'), p.get('url'), p.get('external_ids'), p['title'],
+                        p['corpus_id'], p.get('paper_id'), p.get('url'), p.get('dblp_id'), p.get('external_ids'), p['title'],
                         p.get('abstract'), p.get('venue_normalized'), p.get('year') or 0,
                         p.get('citation_count', 0), p.get('reference_count', 0),
                         p.get('influential_citation_count', 0), p.get('authors'),
