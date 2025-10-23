@@ -174,8 +174,17 @@ class S2AllPapersProcessor:
         if not venue or (isinstance(venue, str) and venue.strip() == ''):
             return None
 
-        # Get paperId (dataset uses lowercase: paperid)
+        # Get URL
+        url = json_obj.get('url', '')
+
+        # Get paperId - first try direct field, then extract from URL
         paper_id = json_obj.get('paperId') or json_obj.get('paperid')
+        if not paper_id and url:
+            # Extract paperId from URL: https://www.semanticscholar.org/paper/<40-char-hash>
+            import re
+            match = re.search(r'/paper/([a-f0-9]{40})', url)
+            if match:
+                paper_id = match.group(1)
 
         # Get citation counts (dataset uses lowercase)
         citation_count = json_obj.get('citationCount') or json_obj.get('citationcount') or 0
@@ -214,6 +223,7 @@ class S2AllPapersProcessor:
         return {
             'corpus_id': corpus_id,
             'paper_id': paper_id,
+            'url': url,
             'title': title,
             'abstract': json_obj.get('abstract'),
             'venue': json_obj.get('venue'),
@@ -286,7 +296,7 @@ class S2AllPapersProcessor:
                 if use_copy:
                     # Use PostgreSQL COPY for maximum speed (10-50x faster)
                     insert_df.to_sql(
-                        name='all_papers',
+                        name='dataset_all_papers',
                         con=engine,
                         if_exists='append',
                         index=False,
@@ -302,7 +312,7 @@ class S2AllPapersProcessor:
                         'publication_types': JSONB
                     }
                     insert_df.to_sql(
-                        name='all_papers',
+                        name='dataset_all_papers',
                         con=engine,
                         if_exists='append',
                         index=False,
@@ -348,6 +358,7 @@ class S2AllPapersProcessor:
         insert_df['abstract'] = insert_df['abstract'].fillna('')
         insert_df['open_access_pdf'] = insert_df['open_access_pdf'].fillna('')
         insert_df['paper_id'] = insert_df['paper_id'].fillna('')
+        insert_df['url'] = insert_df['url'].fillna('')
         insert_df['venue'] = insert_df['venue'].fillna('')
         # venue_normalized can be NULL (not all venues have mappings)
         # No fillna needed - PostgreSQL will handle NULL correctly
@@ -371,7 +382,7 @@ class S2AllPapersProcessor:
         Returns set of filenames (e.g., {'papers_0.jsonl.gz', 'papers_1.jsonl.gz'})
         """
         try:
-            query = "SELECT DISTINCT source_file FROM all_papers WHERE release_id = %s"
+            query = "SELECT DISTINCT source_file FROM dataset_all_papers WHERE release_id = %s"
             results = self.db_manager.fetch_all(query, (self.release_id,))
             processed = {row['source_file'] for row in results if row['source_file']}
             self.logger.info(f"Found {len(processed)} already processed files in database")

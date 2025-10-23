@@ -1,6 +1,6 @@
 """
 Conference Filter Service
-Filters papers from all_papers table by conference and populates dataset_papers table
+Filters papers from dataset_all_papers table by conference and populates dataset_papers table
 Uses SQL-based filtering for efficiency
 """
 
@@ -17,7 +17,7 @@ from .database_conference_matcher import DatabaseConferenceMatcher
 class ConferenceFilterService:
     """
     Filters papers by conference using SQL queries
-    Populates dataset_papers table from all_papers table
+    Populates dataset_papers table from dataset_all_papers table
     """
 
     def __init__(self, db_manager: DatabaseManager, release_id: str):
@@ -50,13 +50,13 @@ class ConferenceFilterService:
 
     def filter_and_populate_dataset_papers(self, batch_size: int = 10000) -> Dict:
         """
-        Filter papers by conference from all_papers and populate dataset_papers
+        Filter papers by conference from dataset_all_papers and populate dataset_papers
         Uses optimized venue_normalized B-tree index with IN queries and cursor-based pagination
         """
         start_time = datetime.now()
 
         self.logger.info("="*80)
-        self.logger.info("Starting conference filtering from all_papers to dataset_papers")
+        self.logger.info("Starting conference filtering from dataset_all_papers to dataset_papers")
         self.logger.info("="*80)
 
         try:
@@ -74,11 +74,11 @@ class ConferenceFilterService:
             self.logger.info(f"Loaded {len(conferences)} conferences")
 
             # Count total matching papers using venue_normalized B-tree index
-            self.logger.info("Counting matching papers in all_papers (using B-tree index)...")
+            self.logger.info("Counting matching papers in dataset_all_papers (using B-tree index)...")
             placeholders = ','.join(['%s'] * len(conferences))
             count_query = f"""
             SELECT COUNT(*) as total
-            FROM all_papers
+            FROM dataset_all_papers
             WHERE venue_normalized IN ({placeholders})
             """
             result = self.db_manager.fetch_one(count_query, tuple(conferences))
@@ -110,6 +110,7 @@ class ConferenceFilterService:
                     SELECT
                         corpus_id,
                         paper_id,
+                        url,
                         external_ids,
                         title,
                         abstract,
@@ -126,7 +127,7 @@ class ConferenceFilterService:
                         open_access_pdf,
                         source_file,
                         release_id
-                    FROM all_papers
+                    FROM dataset_all_papers
                     WHERE venue_normalized IN ({placeholders})
                         AND corpus_id > %s
                     ORDER BY corpus_id
@@ -199,16 +200,17 @@ class ConferenceFilterService:
         try:
             upsert_query = """
             INSERT INTO dataset_papers (
-                corpus_id, paper_id, external_ids, title, abstract, venue, year,
+                corpus_id, paper_id, url, external_ids, title, abstract, venue, year,
                 citation_count, reference_count, influential_citation_count,
                 authors, fields_of_study, publication_types,
                 is_open_access, open_access_pdf, conference_normalized,
                 source_file, release_id
             ) VALUES (
-                %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
+                %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
             )
             ON CONFLICT (corpus_id) DO UPDATE SET
                 paper_id = EXCLUDED.paper_id,
+                url = EXCLUDED.url,
                 external_ids = EXCLUDED.external_ids,
                 title = EXCLUDED.title,
                 abstract = EXCLUDED.abstract,
@@ -230,7 +232,7 @@ class ConferenceFilterService:
 
             params_list = [
                 (
-                    p['corpus_id'], p.get('paper_id'), p.get('external_ids'), p['title'],
+                    p['corpus_id'], p.get('paper_id'), p.get('url'), p.get('external_ids'), p['title'],
                     p.get('abstract'), p.get('venue_normalized'), p.get('year') or 0, p.get('citation_count', 0),
                     p.get('reference_count', 0), p.get('influential_citation_count', 0),
                     p.get('authors'), p.get('fields_of_study'), p.get('publication_types'),
