@@ -2,6 +2,12 @@
 S2 All Papers Processor with Pandas and UPSERT Logic
 Processes S2 dataset files, imports papers with venue filtering
 Note: Papers with empty venue field will be skipped during import
+
+Performance Optimizations:
+- Multi-worker async architecture for parallel DB inserts
+- Connection pool reuse for reduced overhead
+- Optional parallel JSON serialization with multiprocessing
+- Auto-detect optimal worker count based on CPU cores
 """
 
 import gzip
@@ -10,6 +16,7 @@ import logging
 import os
 import time
 import csv
+import asyncio
 import pandas as pd
 from io import StringIO
 from datetime import datetime
@@ -18,6 +25,8 @@ from typing import Generator, Dict, Tuple, Optional
 from tqdm import tqdm
 from sqlalchemy import create_engine, text
 from sqlalchemy.dialects.postgresql import JSONB
+from multiprocessing import Pool, cpu_count
+from threading import Lock
 
 from ...database.connection import DatabaseManager
 from ...database.repositories.dataset_release import DatasetReleaseRepository
@@ -29,20 +38,38 @@ class S2AllPapersProcessor:
     Imports papers from S2 dataset with venue filtering
     Papers with empty venue field will be skipped
     Implements UPSERT logic to ensure only latest release_id is kept for each corpus_id
+
+    Performance Features:
+    - Auto-detect optimal worker count (CPU cores * 0.5)
+    - Multi-worker parallel DB inserts (up to 32 workers)
+    - Connection pool reuse
+    - Optional parallel JSON serialization
     """
 
-    def __init__(self, db_manager: DatabaseManager, release_id: str):
+    def __init__(self, db_manager: DatabaseManager, release_id: str, enable_parallel_json: bool = True, max_workers: int = None):
         self.db_manager = db_manager
         self.release_id = release_id
         self.release_repo = DatasetReleaseRepository(db_manager)
         self.logger = self._setup_logger()
 
-        # Statistics counters
+        # Performance configuration
+        self.num_workers = self._calculate_optimal_workers()
+        # Allow manual override of worker count
+        if max_workers is not None:
+            self.num_workers = max(1, min(max_workers, 32))
+            self.logger.info(f"Worker count manually set to: {self.num_workers}")
+        self.enable_parallel_json = enable_parallel_json
+
+        # Statistics counters (thread-safe)
         self.total_processed = 0
         self.total_inserted = 0
+        self.stats_lock = Lock()
 
         # Load venue mapping table into memory for fast lookup
         self.venue_mapping = self._load_venue_mapping()
+
+        # Initialize connection pool for reuse
+        self.engine = self._create_engine_pool()
 
     def _setup_logger(self) -> logging.Logger:
         """Setup logger"""
@@ -58,6 +85,57 @@ class S2AllPapersProcessor:
             logger.addHandler(handler)
 
         return logger
+
+    def _calculate_optimal_workers(self) -> int:
+        """
+        Calculate optimal number of workers based on CPU cores
+        Formula: min(CPU cores * 0.25, 8) to avoid over-subscription
+        Returns at least 1 worker, max 8 workers (reduced for system stability)
+        """
+        try:
+            cores = cpu_count()
+            # Use 25% of CPU cores (very conservative to prevent SSH issues)
+            optimal = max(1, int(cores * 0.25))
+            # Cap at 8 workers to avoid overwhelming system resources
+            workers = min(optimal, 8)
+            return workers
+        except Exception as e:
+            self.logger.warning(f"Failed to detect CPU count: {e}, using 2 workers as fallback")
+            return 2
+
+    def _create_engine_pool(self):
+        """
+        Create SQLAlchemy engine with connection pool for reuse
+        Pool size = num_workers * 1 (1 connection per worker, reduced for resource conservation)
+        Max overflow = num_workers * 1 (handle burst traffic, reduced to prevent connection exhaustion)
+        """
+        connection_string = self.db_manager.config.get_connection_string()
+        pool_size = self.num_workers * 1  # Reduced from 2 to 1
+        max_overflow = self.num_workers * 1  # Reduced from 4 to 1
+
+        engine = create_engine(
+            connection_string,
+            pool_size=pool_size,
+            max_overflow=max_overflow,
+            pool_pre_ping=True,  # Check connection health before use
+            pool_recycle=3600,   # Recycle connections every hour
+            echo=False
+        )
+
+        self.logger.info(f"🚀 Performance Configuration:")
+        self.logger.info(f"   - CPU cores detected: {cpu_count()}")
+        self.logger.info(f"   - Parallel workers: {self.num_workers}")
+        self.logger.info(f"   - Connection pool size: {pool_size}")
+        self.logger.info(f"   - Max overflow: {max_overflow}")
+        self.logger.info(f"   - Parallel JSON: {'ENABLED' if self.enable_parallel_json else 'DISABLED'}")
+
+        return engine
+
+    def cleanup(self):
+        """Clean up resources (connection pool)"""
+        if hasattr(self, 'engine') and self.engine:
+            self.engine.dispose()
+            self.logger.info("Connection pool disposed")
 
     def _load_venue_mapping(self) -> dict:
         """
@@ -174,8 +252,17 @@ class S2AllPapersProcessor:
         if not venue or (isinstance(venue, str) and venue.strip() == ''):
             return None
 
-        # Get paperId (dataset uses lowercase: paperid)
+        # Get URL
+        url = json_obj.get('url', '')
+
+        # Get paperId - first try direct field, then extract from URL
         paper_id = json_obj.get('paperId') or json_obj.get('paperid')
+        if not paper_id and url:
+            # Extract paperId from URL: https://www.semanticscholar.org/paper/<40-char-hash>
+            import re
+            match = re.search(r'/paper/([a-f0-9]{40})', url)
+            if match:
+                paper_id = match.group(1)
 
         # Get citation counts (dataset uses lowercase)
         citation_count = json_obj.get('citationCount') or json_obj.get('citationcount') or 0
@@ -214,6 +301,7 @@ class S2AllPapersProcessor:
         return {
             'corpus_id': corpus_id,
             'paper_id': paper_id,
+            'url': url,
             'title': title,
             'abstract': json_obj.get('abstract'),
             'venue': json_obj.get('venue'),
@@ -263,7 +351,7 @@ class S2AllPapersProcessor:
     def batch_insert_papers_fast(self, df: pd.DataFrame, use_copy: bool = True) -> int:
         """
         Fast batch insert: Direct INSERT without UPSERT checks
-        Optimized for first-time import
+        Optimized for first-time import with connection pool reuse
         Returns inserted_count
         """
         if df is None or df.empty:
@@ -277,54 +365,54 @@ class S2AllPapersProcessor:
                 self.logger.warning("No valid records after preparation")
                 return 0
 
-            connection_string = self.db_manager.config.get_connection_string()
-            engine = create_engine(connection_string)
+            # Use reusable engine (connection pool)
+            # Direct insert without existence checks
+            # Note: JSON fields are already serialized as strings in _prepare_dataframe_for_insertion
+            if use_copy:
+                # Use PostgreSQL COPY for maximum speed (10-50x faster)
+                insert_df.to_sql(
+                    name='dataset_all_papers',
+                    con=self.engine,
+                    if_exists='append',
+                    index=False,
+                    method=self._psql_insert_copy
+                )
+            else:
+                # Use standard executemany INSERT
+                # For non-COPY mode, we still need dtype mapping
+                dtype_mapping = {
+                    'authors': JSONB,
+                    'external_ids': JSONB,
+                    'fields_of_study': JSONB,
+                    'publication_types': JSONB
+                }
+                insert_df.to_sql(
+                    name='dataset_all_papers',
+                    con=self.engine,
+                    if_exists='append',
+                    index=False,
+                    method='multi',
+                    chunksize=50000,
+                    dtype=dtype_mapping
+                )
 
-            try:
-                # Direct insert without existence checks
-                # Note: JSON fields are already serialized as strings in _prepare_dataframe_for_insertion
-                if use_copy:
-                    # Use PostgreSQL COPY for maximum speed (10-50x faster)
-                    insert_df.to_sql(
-                        name='all_papers',
-                        con=engine,
-                        if_exists='append',
-                        index=False,
-                        method=self._psql_insert_copy
-                    )
-                else:
-                    # Use standard executemany INSERT
-                    # For non-COPY mode, we still need dtype mapping
-                    dtype_mapping = {
-                        'authors': JSONB,
-                        'external_ids': JSONB,
-                        'fields_of_study': JSONB,
-                        'publication_types': JSONB
-                    }
-                    insert_df.to_sql(
-                        name='all_papers',
-                        con=engine,
-                        if_exists='append',
-                        index=False,
-                        method='multi',
-                        chunksize=50000,
-                        dtype=dtype_mapping
-                    )
-
-                inserted = len(insert_df)
-                return inserted
-
-            finally:
-                engine.dispose()
+            inserted = len(insert_df)
+            return inserted
 
         except Exception as e:
             self.logger.error(f"Batch insert failed: {e}")
             raise
 
 
+    @staticmethod
+    def _serialize_json_field(value):
+        """Static method for JSON serialization (used by multiprocessing pool)"""
+        return json.dumps(value) if value is not None else '[]'
+
     def _prepare_dataframe_for_insertion(self, df: pd.DataFrame) -> pd.DataFrame:
         """
         Prepare DataFrame: type conversion, NULL handling, deduplication
+        Supports parallel JSON serialization if enabled
         """
         insert_df = df.copy()
 
@@ -348,17 +436,41 @@ class S2AllPapersProcessor:
         insert_df['abstract'] = insert_df['abstract'].fillna('')
         insert_df['open_access_pdf'] = insert_df['open_access_pdf'].fillna('')
         insert_df['paper_id'] = insert_df['paper_id'].fillna('')
+        insert_df['url'] = insert_df['url'].fillna('')
         insert_df['venue'] = insert_df['venue'].fillna('')
         # venue_normalized can be NULL (not all venues have mappings)
         # No fillna needed - PostgreSQL will handle NULL correctly
 
         # OPTIMIZATION: Convert JSON fields to proper JSON strings for PostgreSQL COPY
         # This is critical: Python list/dict -> JSON string (with double quotes)
-        # Using string constant '[]' instead of json.dumps([]) for better performance
-        for json_field in ['authors', 'external_ids', 'fields_of_study', 'publication_types']:
-            insert_df[json_field] = insert_df[json_field].apply(
-                lambda x: json.dumps(x) if x is not None else '[]'
-            )
+        json_fields = ['authors', 'external_ids', 'fields_of_study', 'publication_types']
+
+        if self.enable_parallel_json and len(insert_df) > 10000:
+            # Use multiprocessing pool for parallel JSON serialization (large batches)
+            try:
+                num_json_workers = min(2, cpu_count())  # Reduced from 8 to 2 for resource conservation
+                with Pool(processes=num_json_workers) as pool:
+                    for json_field in json_fields:
+                        # Parallel map with chunksize for balanced workload
+                        serialized = pool.map(
+                            self._serialize_json_field,
+                            insert_df[json_field].tolist(),
+                            chunksize=10000
+                        )
+                        insert_df[json_field] = serialized
+            except Exception as e:
+                self.logger.warning(f"Parallel JSON serialization failed: {e}, falling back to serial")
+                # Fallback to serial processing
+                for json_field in json_fields:
+                    insert_df[json_field] = insert_df[json_field].apply(
+                        lambda x: json.dumps(x) if x is not None else '[]'
+                    )
+        else:
+            # Use serial processing for small batches (overhead not worth it)
+            for json_field in json_fields:
+                insert_df[json_field] = insert_df[json_field].apply(
+                    lambda x: json.dumps(x) if x is not None else '[]'
+                )
 
         # Deduplication: if duplicate corpus_id in same batch, keep first
         insert_df = insert_df.drop_duplicates(subset=['corpus_id'], keep='first')
@@ -371,7 +483,7 @@ class S2AllPapersProcessor:
         Returns set of filenames (e.g., {'papers_0.jsonl.gz', 'papers_1.jsonl.gz'})
         """
         try:
-            query = "SELECT DISTINCT source_file FROM all_papers WHERE release_id = %s"
+            query = "SELECT DISTINCT source_file FROM dataset_all_papers WHERE release_id = %s"
             results = self.db_manager.fetch_all(query, (self.release_id,))
             processed = {row['source_file'] for row in results if row['source_file']}
             self.logger.info(f"Found {len(processed)} already processed files in database")
@@ -380,22 +492,24 @@ class S2AllPapersProcessor:
             self.logger.warning(f"Could not query processed files: {e}")
             return set()
 
-    async def process_dataset_files(self, data_dir: str, pipeline_depth: int = 3, chunk_size: int = 500000, resume: bool = False) -> Dict:
+    async def process_dataset_files(self, data_dir: str, pipeline_depth: int = None, chunk_size: int = 500000, resume: bool = False) -> Dict:
         """
-        Process all downloaded dataset files with async pipeline - FAST IMPORT MODE
+        Process all downloaded dataset files with MULTI-WORKER async pipeline
 
-        Uses producer-consumer pattern to overlap parsing and database insertion.
+        Uses producer-consumer pattern with multiple parallel workers for maximum throughput.
         Optimized for first-time import with direct INSERT (no UPSERT checks).
 
         Args:
             data_dir: Directory containing .gz dataset files
-            pipeline_depth: Max chunks buffered in queue (default: 3)
+            pipeline_depth: Max chunks buffered in queue (default: auto = num_workers * 2)
             chunk_size: Papers per chunk (default: 500k, optimized for performance)
             resume: If True, skip files that are already in database (based on source_file)
         """
-        import asyncio
-
         start_time = datetime.now()
+
+        # Auto-calculate optimal pipeline depth if not specified
+        if pipeline_depth is None:
+            pipeline_depth = self.num_workers * 2
 
         # Update release status
         self.release_repo.update_release_status(
@@ -442,7 +556,7 @@ class S2AllPapersProcessor:
                 }
 
         self.logger.info(f"Found {len(files)} dataset files to process")
-        self.logger.info(f"Async pipeline: depth={pipeline_depth}, chunk_size={chunk_size:,}")
+        self.logger.info(f"🚀 Multi-worker pipeline: workers={self.num_workers}, queue_depth={pipeline_depth}, chunk_size={chunk_size:,}")
         if resume:
             self.logger.info(f"Resume mode: ENABLED")
 
@@ -450,8 +564,12 @@ class S2AllPapersProcessor:
             # Create queue for pipeline (producer-consumer)
             queue = asyncio.Queue(maxsize=pipeline_depth)
 
+            # Per-worker statistics
+            worker_stats = {i: {'chunks': 0, 'papers': 0} for i in range(self.num_workers)}
+
             # Consumer worker: process chunks from queue and insert to DB
-            async def insert_worker():
+            async def insert_worker(worker_id: int):
+                """Multi-worker consumer with per-worker stats"""
                 while True:
                     item = await queue.get()
 
@@ -467,23 +585,37 @@ class S2AllPapersProcessor:
                             self.batch_insert_papers_fast, df_chunk
                         )
 
-                        self.total_inserted += inserted
+                        # Thread-safe statistics update
+                        with self.stats_lock:
+                            self.total_inserted += inserted
+                            worker_stats[worker_id]['chunks'] += 1
+                            worker_stats[worker_id]['papers'] += inserted
 
-                        self.logger.info(
-                            f"Progress: File {file_idx}/{total_files}, "
-                            f"Processed={self.total_processed:,}, "
-                            f"Inserted={self.total_inserted:,}"
-                        )
+                            # Log progress every 10 chunks (reduce log spam)
+                            if worker_stats[worker_id]['chunks'] % 10 == 0:
+                                elapsed = (datetime.now() - start_time).total_seconds()
+                                rate = self.total_processed / elapsed if elapsed > 0 else 0
+                                self.logger.info(
+                                    f"Worker-{worker_id}: File {file_idx}/{total_files}, "
+                                    f"Chunk #{worker_stats[worker_id]['chunks']}, "
+                                    f"Global: Processed={self.total_processed:,}, "
+                                    f"Inserted={self.total_inserted:,}, "
+                                    f"Rate={rate:,.0f} papers/sec"
+                                )
 
                     except Exception as e:
-                        self.logger.error(f"Insert worker error: {e}", exc_info=True)
+                        self.logger.error(f"Worker-{worker_id} error: {e}", exc_info=True)
                         queue.task_done()
                         raise
 
                     queue.task_done()
 
-            # Start consumer worker task
-            insert_task = asyncio.create_task(insert_worker())
+            # Start multiple consumer worker tasks (PARALLEL WORKERS!)
+            worker_tasks = [
+                asyncio.create_task(insert_worker(worker_id))
+                for worker_id in range(self.num_workers)
+            ]
+            self.logger.info(f"✓ Started {self.num_workers} parallel insert workers")
 
             # Producer: parse files and feed chunks to queue
             for file_idx, file_path in enumerate(tqdm(files, desc="Processing files"), 1):
@@ -494,15 +626,26 @@ class S2AllPapersProcessor:
                     # Put chunk in queue (blocks if queue is full - automatic backpressure)
                     await queue.put((df_chunk, file_idx, len(files)))
 
-            # Send poison pill to stop worker
-            await queue.put(None)
+            # Send poison pills to stop all workers (one per worker)
+            for _ in range(self.num_workers):
+                await queue.put(None)
 
             # Wait for all queued work to complete
             await queue.join()
-            await insert_task
+
+            # Wait for all worker tasks to finish
+            await asyncio.gather(*worker_tasks)
 
             end_time = datetime.now()
             processing_time = (end_time - start_time).total_seconds()
+
+            # Print per-worker statistics
+            self.logger.info("="*80)
+            self.logger.info("Per-Worker Statistics:")
+            for worker_id, stats in worker_stats.items():
+                self.logger.info(
+                    f"  Worker-{worker_id}: {stats['chunks']} chunks, {stats['papers']:,} papers"
+                )
 
             # Update release statistics
             self.release_repo.update_release_status(
@@ -514,12 +657,16 @@ class S2AllPapersProcessor:
             )
 
             self.logger.info("="*80)
-            self.logger.info("All papers import completed successfully (FAST IMPORT MODE)!")
+            self.logger.info("🎉 All papers import completed successfully (MULTI-WORKER MODE)!")
             self.logger.info(f"Total papers processed: {self.total_processed:,}")
             self.logger.info(f"Papers inserted: {self.total_inserted:,}")
             self.logger.info(f"Processing time: {processing_time:.2f}s ({processing_time/60:.2f} minutes, {processing_time/3600:.2f} hours)")
             self.logger.info(f"Average speed: {self.total_processed/processing_time:.0f} papers/sec")
+            self.logger.info(f"Workers used: {self.num_workers}")
             self.logger.info("="*80)
+
+            # Clean up connection pool
+            self.cleanup()
 
             return {
                 'release_id': self.release_id,
@@ -527,7 +674,8 @@ class S2AllPapersProcessor:
                 'total_files': len(files),
                 'total_papers_processed': self.total_processed,
                 'papers_inserted': self.total_inserted,
-                'processing_time_seconds': processing_time
+                'processing_time_seconds': processing_time,
+                'num_workers': self.num_workers
             }
 
         except Exception as e:
@@ -537,4 +685,6 @@ class S2AllPapersProcessor:
                 'failed',
                 processing_end_time=datetime.now()
             )
+            # Clean up connection pool on error
+            self.cleanup()
             raise

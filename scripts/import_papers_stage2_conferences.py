@@ -1,22 +1,28 @@
 #!/usr/bin/env python3
 """
-Stage 2: Filter conference papers from all_papers to dataset_papers table
+Stage 2: Filter conference papers from dataset_all_papers to dataset_papers table
 
-Filters papers by conference venue from the all_papers base table and populates
+Filters papers by conference venue from the dataset_all_papers base table and populates
 the dataset_papers partitioned table with only conference papers.
 
 Table Structure:
 - Always creates a PARTITIONED table by year (34 partitions)
 - NULL years are automatically converted to 0 and stored in dataset_papers_0_1970 partition
+- Automatically extracts DBLP ID from external_ids JSONB field to dedicated column
+- Normalizes paper titles (removes artifacts, fixes encoding, converts to lowercase)
 
 Performance Optimization:
+- Optimized index set: 7 core indexes (corpus_id, paper_id, title, conference, year, dblp_id, authors)
 - By default, drops indexes before bulk insert and rebuilds after (5-10x faster!)
 - For 17M records: ~2-3 hours total (vs 10+ hours with indexes)
+- Index rebuild time: ~30-70 minutes (includes title and paper_id indexes)
 
 Features:
 - Intelligent index management for optimal performance
+- Automatic DBLP ID extraction during import
+- Title normalization (removes PDF artifacts, fixes encoding, converts to lowercase)
 - SQL-based filtering for efficiency
-- Processes ALL data in all_papers (regardless of release_id)
+- Processes ALL data in dataset_all_papers (regardless of release_id)
 - Conference matching with aliases support
 - Batch processing for memory efficiency
 - Complete timing statistics and throughput metrics
@@ -55,16 +61,45 @@ def setup_database_tables(db_manager: DatabaseManager, drop_indexes: bool = True
         paper_schema = DatasetPaperSchema(db_manager)
         print("📊 Using PARTITIONED table (by year)")
 
-        # Check if table exists and has data
-        count_query = "SELECT COUNT(*) as count FROM dataset_papers"
-        try:
+        # Check if table exists and validate schema
+        table_exists_query = """
+        SELECT EXISTS (
+            SELECT 1 FROM information_schema.tables
+            WHERE table_name = 'dataset_papers'
+        ) as exists
+        """
+        table_result = db_manager.fetch_one(table_exists_query)
+        table_exists = table_result and table_result.get('exists', False)
+
+        if table_exists:
+            # Validate that table has required columns (url and dblp_id)
+            column_check_query = """
+            SELECT column_name
+            FROM information_schema.columns
+            WHERE table_name = 'dataset_papers'
+            AND column_name IN ('url', 'dblp_id')
+            """
+            columns = db_manager.fetch_all(column_check_query)
+            column_names = [col['column_name'] for col in columns] if columns else []
+
+            if 'url' not in column_names or 'dblp_id' not in column_names:
+                print("\n⚠️  ERROR: Table exists but has old schema (missing url/dblp_id columns)")
+                print("   The table needs to be recreated with the new schema.")
+                print("\n   Run this command to reset the table:")
+                print("   uv run python scripts/reset_dataset_papers_table.py")
+                print("\n   This will delete all data and recreate with correct schema.")
+                return False
+
+            # Check row count
+            count_query = "SELECT COUNT(*) as count FROM dataset_papers"
             result = db_manager.fetch_one(count_query)
-            has_data = result and result.get('count', 0) > 0
-            if has_data:
-                print(f"⚠️  dataset_papers table already has {result['count']:,} records")
+            row_count = result.get('count', 0) if result else 0
+
+            if row_count > 0:
+                print(f"✓ Table exists with correct schema ({row_count:,} records)")
                 print("   Continuing will UPSERT (update existing, insert new)")
-        except:
-            has_data = False
+            else:
+                print("✓ Table exists with correct schema (empty)")
 
         if not paper_schema.create_table():
             print("Error: Failed to create dataset_papers table")
@@ -96,24 +131,24 @@ def setup_database_tables(db_manager: DatabaseManager, drop_indexes: bool = True
 
 def get_release_id_from_all_papers(db_manager: DatabaseManager) -> str:
     """
-    Get a release_id from all_papers table for recording purposes
+    Get a release_id from dataset_all_papers table for recording purposes
     Note: This is only used for marking new records, not for filtering
     """
     try:
-        query = "SELECT release_id FROM all_papers LIMIT 1"
+        query = "SELECT release_id FROM dataset_all_papers LIMIT 1"
         result = db_manager.fetch_one(query)
         if result:
             return result['release_id']
         else:
-            print("Warning: No data found in all_papers table")
+            print("Warning: No data found in dataset_all_papers table")
             return "unknown"
     except Exception as e:
-        print(f"Warning: Could not get release_id from all_papers: {e}")
+        print(f"Warning: Could not get release_id from dataset_all_papers: {e}")
         return "unknown"
 
 
 def filter_conferences(args, db_manager: DatabaseManager):
-    """Filter conference papers from all_papers to dataset_papers"""
+    """Filter conference papers from dataset_all_papers to dataset_papers"""
     print(f"\n{'='*80}")
     print("STAGE 2: Filtering conference papers")
     print(f"{'='*80}")
@@ -121,13 +156,14 @@ def filter_conferences(args, db_manager: DatabaseManager):
     # Get release_id for recording (not for filtering!)
     release_id = get_release_id_from_all_papers(db_manager)
     print(f"Using release_id for new records: {release_id}")
-    print("Note: Processing ALL data in all_papers (not filtering by release_id)")
+    print("Note: Processing ALL data in dataset_all_papers (not filtering by release_id)")
 
     # Create filter service
     filter_service = ConferenceFilterService(db_manager, release_id)
 
-    # Filter and populate
-    stats = filter_service.filter_and_populate_dataset_papers(batch_size=args.batch_size)
+    # Use parallel processing (auto-detect optimal process count)
+    print(f"\n🚀 Using PARALLEL processing (auto-detecting optimal process count)")
+    stats = filter_service.filter_and_populate_parallel(batch_size=args.batch_size)
 
     return stats
 
@@ -192,31 +228,36 @@ def print_statistics(stats: dict, total_time_seconds: float = None):
 def main():
     """Main entry point"""
     parser = argparse.ArgumentParser(
-        description='Stage 2: Filter conference papers from all_papers to dataset_papers table',
+        description='Stage 2: Filter conference papers from dataset_all_papers to dataset_papers table',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Stage 2: Filter Conference Papers
 
-This script filters papers by conference venue from the all_papers base table
+This script filters papers by conference venue from the dataset_all_papers base table
 and populates the dataset_papers PARTITIONED table with only conference papers.
 
 Table Structure:
 - Always creates a PARTITIONED table by year (34 partitions)
 - NULL years are automatically converted to 0 and stored in dataset_papers_0_1970 partition
+- Automatically extracts DBLP ID from external_ids JSONB to dedicated column
 
 Performance Optimization:
+Optimized index set (7 core indexes: corpus_id, paper_id, title, conference, year, dblp_id, authors)
 By default, this script drops indexes before bulk insert and rebuilds them after,
 resulting in 5-10x faster performance:
 - With index optimization:  ~2-3 hours for 17M records (recommended)
 - Without optimization:     ~10-11 hours for 17M records
+- Index rebuild time:       ~30-70 minutes (7 indexes including paper_id and title)
 
 Process:
 1. Create partitioned table if not exists (34 partitions by year)
-2. Drop all 7 indexes from dataset_papers table (if not --keep-indexes)
-3. Bulk insert conference papers from all_papers (uses venue_normalized index)
-4. Rebuild all indexes in one go (more efficient than per-row updates)
+2. Drop 6 secondary indexes from dataset_papers table (if not --keep-indexes)
+3. Bulk insert conference papers from dataset_all_papers (uses venue_normalized index)
+   - Automatically extracts DBLP ID from external_ids during insert
+   - Normalizes paper titles (removes artifacts, fixes encoding, converts to lowercase)
+4. Rebuild 6 indexes in one go (more efficient than per-row updates)
 
-IMPORTANT: This script processes ALL data in the all_papers table, regardless
+IMPORTANT: This script processes ALL data in the dataset_all_papers table, regardless
 of release_id. It does not perform incremental filtering.
 
 Examples:

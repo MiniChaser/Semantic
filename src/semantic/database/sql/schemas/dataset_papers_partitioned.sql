@@ -28,8 +28,11 @@ CREATE TABLE IF NOT EXISTS dataset_papers (
     id INTEGER NOT NULL DEFAULT nextval('dataset_papers_id_seq'::regclass),
     corpus_id BIGINT NOT NULL,
     paper_id VARCHAR(100),
+    url TEXT,
+    dblp_id VARCHAR(255),
     external_ids JSONB,
     title TEXT NOT NULL,
+    title_key TEXT,  -- Normalized title (lowercase, cleaned) for lookups
     abstract TEXT,
     venue TEXT,
     year INTEGER,  -- PARTITION KEY
@@ -165,17 +168,36 @@ CREATE TABLE IF NOT EXISTS dataset_papers_2031_plus PARTITION OF dataset_papers
 -- ============================================================================
 -- Create indexes on parent table (automatically propagate to all partitions)
 -- ============================================================================
+-- Optimized index configuration (8 core indexes):
+-- 1. corpus_id + year - Composite UNIQUE constraint (required for UPSERT with ON CONFLICT)
+-- 2. paper_id - Semantic Scholar paper ID lookups
+-- 3. title_key - Normalized title lookups (exact match on cleaned title)
+-- 4. conference_normalized - Conference filtering (core functionality)
+-- 5. year - Partition key (range queries)
+-- 6. dblp_id - DBLP identifier lookups (partial index for non-NULL values)
+-- 7. authors (GIN) - Complex author JSONB queries
+--
+-- Note: title (original) is kept for display, title_key (normalized) is for searching
+--
+-- Removed indexes (low value, can be recreated later if needed):
+-- - venue (replaced by conference_normalized)
+-- - release_id (rarely queried)
+-- - citation_count (can add back for citation-based sorting if needed)
+-- ============================================================================
 
--- Query optimization index (corpus_id is our primary identifier)
--- Note: Cannot use UNIQUE constraint on partitioned table without including partition key (year)
-CREATE INDEX IF NOT EXISTS idx_dataset_papers_corpus_id ON dataset_papers(corpus_id);
+-- Primary identifier unique constraint (corpus_id + year)
+-- Note: PostgreSQL requires partition key (year) in UNIQUE constraints on partitioned tables
+-- This enables ON CONFLICT (corpus_id, year) in UPSERT operations
+CREATE UNIQUE INDEX IF NOT EXISTS idx_dataset_papers_corpus_id_year ON dataset_papers(corpus_id, year);
 
--- Query optimization indexes
-CREATE INDEX IF NOT EXISTS idx_dataset_papers_venue ON dataset_papers(venue);
+-- Core query optimization indexes
+CREATE INDEX IF NOT EXISTS idx_dataset_papers_paper_id ON dataset_papers(paper_id);
+CREATE INDEX IF NOT EXISTS idx_dataset_papers_title_key ON dataset_papers(title_key);
 CREATE INDEX IF NOT EXISTS idx_dataset_papers_conference ON dataset_papers(conference_normalized);
 CREATE INDEX IF NOT EXISTS idx_dataset_papers_year ON dataset_papers(year);
-CREATE INDEX IF NOT EXISTS idx_dataset_papers_release_id ON dataset_papers(release_id);
-CREATE INDEX IF NOT EXISTS idx_dataset_papers_citation_count ON dataset_papers(citation_count);
+
+-- DBLP identifier index (partial index for space efficiency)
+CREATE INDEX IF NOT EXISTS idx_dataset_papers_dblp_id ON dataset_papers(dblp_id) WHERE dblp_id IS NOT NULL;
 
 -- GIN index for JSONB author queries
 CREATE INDEX IF NOT EXISTS idx_dataset_papers_authors ON dataset_papers USING GIN (authors);

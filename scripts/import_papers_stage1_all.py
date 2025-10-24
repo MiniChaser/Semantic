@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-Stage 1: Import ALL papers from S2 dataset to all_papers table
+Stage 1: Import ALL papers from S2 dataset to dataset_all_papers table
 
 Downloads and imports all papers (200M records) from Semantic Scholar dataset
-to the all_papers base table with optimized bulk import performance.
+to the dataset_all_papers base table with optimized bulk import performance.
 
 Features:
 - Downloads latest S2 dataset release (optional)
@@ -27,6 +27,7 @@ Venue Normalization:
 
 import argparse
 import asyncio
+import os
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -55,10 +56,10 @@ def setup_database_tables(db_manager: DatabaseManager) -> bool:
             print("Error: Failed to create dataset_release table")
             return False
 
-        # Create all_papers table (base table for all 200M papers)
+        # Create dataset_all_papers table (base table for all 200M papers)
         all_papers_schema = AllPapersSchema(db_manager)
         if not all_papers_schema.create_table():
-            print("Error: Failed to create all_papers table")
+            print("Error: Failed to create dataset_all_papers table")
             return False
 
         print("✓ Database tables ready")
@@ -139,15 +140,23 @@ async def import_all_papers(args, db_manager: DatabaseManager, release_id: str):
     print("STAGE 1: Importing ALL papers with OPTIMIZED FAST IMPORT MODE")
     print(f"{'='*80}")
 
-    # Clear all_papers table before import (unless skip-truncate or resume flag is set)
+    # Set process nice priority to reduce system impact
+    if args.nice_priority:
+        try:
+            os.nice(args.nice_priority)
+            print(f"\n✓ Process nice priority set to: {args.nice_priority} (lower system priority)")
+        except Exception as e:
+            print(f"⚠️  Warning: Could not set nice priority: {e}")
+
+    # Clear dataset_all_papers table before import (unless skip-truncate or resume flag is set)
     if args.resume:
         print("\n📝 Resume mode: Skipping files already in database...")
         print("   (Will not truncate table)")
     elif not args.skip_truncate:
-        print("\n⚠️  Clearing all_papers table before import...")
+        print("\n⚠️  Clearing dataset_all_papers table before import...")
         try:
-            db_manager.execute_query("TRUNCATE TABLE all_papers CASCADE;")
-            print("✓ all_papers table truncated successfully")
+            db_manager.execute_query("TRUNCATE TABLE dataset_all_papers CASCADE;")
+            print("✓ dataset_all_papers table truncated successfully")
         except Exception as e:
             print(f"Error truncating table: {e}")
             print("Note: If table doesn't exist, it will be created during import.")
@@ -160,8 +169,16 @@ async def import_all_papers(args, db_manager: DatabaseManager, release_id: str):
     if not all_papers_schema.drop_indexes():
         print("⚠️  Warning: Failed to drop indexes, continuing anyway...")
 
-    # Create processor
-    processor = S2AllPapersProcessor(db_manager, release_id)
+    # Create processor with optional max_workers override
+    max_workers = None
+    if args.conservative:
+        max_workers = 1
+        print("\n🐌 Conservative mode: Using 1 worker (minimal resource usage)")
+    elif args.max_workers:
+        max_workers = args.max_workers
+        print(f"\n⚙️  Manual worker limit: {max_workers} workers")
+
+    processor = S2AllPapersProcessor(db_manager, release_id, max_workers=max_workers)
 
     # Process files with async pipeline (fast mode - no UPSERT)
     stats = await processor.process_dataset_files(
@@ -272,44 +289,51 @@ async def main_async(args):
 def main():
     """Main entry point"""
     parser = argparse.ArgumentParser(
-        description='Stage 1: Import all papers from S2 dataset to all_papers table',
+        description='Stage 1: Import all papers from S2 dataset to dataset_all_papers table',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
-Stage 1: Import ALL Papers (Optimized for Performance)
+Stage 1: Import ALL Papers (Resource-Optimized)
 
 This script downloads and imports all papers (200M records) from Semantic Scholar
-dataset to the all_papers base table with optimized bulk import performance.
+dataset to the dataset_all_papers base table with optimized bulk import performance.
 
-OPTIMIZATIONS (3-5x faster):
+RESOURCE OPTIMIZATIONS (conservative for system stability):
+  - Multi-worker parallel DB inserts (auto-detect: CPU cores * 0.25, max 8 workers)
+  - Lower process priority (nice=10) to prevent SSH connection issues
+  - Connection pool reuse for reduced overhead
+  - Parallel JSON serialization with multiprocessing (max 2 workers)
   - Drops all indexes before bulk insert
-  - Uses optimized chunk_size (500k) and pipeline_depth (5)
+  - Uses optimized chunk_size (200k) and auto-adaptive queue depth
   - Creates only 2 essential indexes (corpus_id, venue_normalized)
   - Skips unnecessary indexes (year, release_id, citation_count, paper_id, authors GIN)
 
-IMPORTANT: This script will TRUNCATE the all_papers table before importing
+IMPORTANT: This script will TRUNCATE the dataset_all_papers table before importing
 (use --skip-truncate to prevent this).
 
 Resume Support: Use --resume to automatically skip files that are already
 in the database (based on source_file field). Perfect for interrupted imports!
 
+Resource Control Options:
+  - Use --conservative for minimal resource usage (1 worker, prevents SSH issues)
+  - Use --max-workers N to manually set worker count
+  - Use --nice-priority N (0-19) to adjust process priority
+  - Default chunk size reduced to 200k for lower memory usage
+
 Examples:
-  # Download and import (full pipeline)
-  %(prog)s
+  # Conservative mode (recommended to prevent SSH issues)
+  %(prog)s --process-only --data-dir downloads/ --conservative
 
-  # Download only
-  %(prog)s --download-only
-
-  # Process existing files (recommended usage)
-  %(prog)s --process-only --data-dir downloads/
+  # Custom worker count (2-4 workers recommended for stability)
+  %(prog)s --process-only --data-dir downloads/ --max-workers 2
 
   # Resume interrupted import (smart file skipping)
   %(prog)s --process-only --data-dir downloads/ --resume
 
-  # Custom chunk size (adjust for your system memory)
-  %(prog)s --process-only --data-dir downloads/ --chunk-size 300000
+  # Lower priority (won't block SSH, default is already 10)
+  %(prog)s --process-only --data-dir downloads/ --nice-priority 15
 
-  # Increase parallelism (requires more RAM)
-  %(prog)s --process-only --data-dir downloads/ --pipeline-depth 10
+  # Full control
+  %(prog)s --process-only --data-dir downloads/ --max-workers 4 --chunk-size 100000 --nice-priority 10
 
   # Custom dataset and directory
   %(prog)s --dataset-name abstracts --data-dir /path/to/data/
@@ -331,7 +355,7 @@ Examples:
     parser.add_argument(
         '--skip-truncate',
         action='store_true',
-        help='Skip truncating all_papers table before import (default: truncate)'
+        help='Skip truncating dataset_all_papers table before import (default: truncate)'
     )
 
     parser.add_argument(
@@ -355,15 +379,35 @@ Examples:
     parser.add_argument(
         '--chunk-size',
         type=int,
-        default=500000,
-        help='Number of papers per chunk for processing (default: 500,000)'
+        default=200000,
+        help='Number of papers per chunk for processing (default: 200,000, reduced for lower memory usage)'
     )
 
     parser.add_argument(
         '--pipeline-depth',
         type=int,
-        default=5,
-        help='Async pipeline queue depth (default: 5, higher = more parallelism)'
+        default=None,
+        help='Async pipeline queue depth (default: auto = workers * 2, recommended for optimal performance)'
+    )
+
+    parser.add_argument(
+        '--max-workers',
+        type=int,
+        default=None,
+        help='Maximum number of parallel workers (default: auto = 25%% of CPU cores, max 8)'
+    )
+
+    parser.add_argument(
+        '--conservative',
+        action='store_true',
+        help='Conservative mode: Use minimal resources (1 worker, lower priority). Recommended to prevent SSH issues.'
+    )
+
+    parser.add_argument(
+        '--nice-priority',
+        type=int,
+        default=10,
+        help='Process nice priority (0-19, higher = lower priority, default: 10). Set to 0 to disable.'
     )
 
     args = parser.parse_args()
@@ -375,6 +419,18 @@ Examples:
 
     if args.resume and args.skip_truncate:
         print("Error: Cannot specify both --resume and --skip-truncate (resume implies skip-truncate)")
+        return 1
+
+    if args.conservative and args.max_workers:
+        print("Error: Cannot specify both --conservative and --max-workers")
+        return 1
+
+    if args.max_workers and (args.max_workers < 1 or args.max_workers > 32):
+        print("Error: --max-workers must be between 1 and 32")
+        return 1
+
+    if args.nice_priority < 0 or args.nice_priority > 19:
+        print("Error: --nice-priority must be between 0 and 19")
         return 1
 
     # Run async main
