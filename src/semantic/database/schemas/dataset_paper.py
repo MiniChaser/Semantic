@@ -34,19 +34,21 @@ class DatasetPaperSchema:
         """
         Get SQL statements for creating indexes on dataset_papers table (for drop/recreate operations)
 
-        Optimized index configuration (7 core indexes):
+        Optimized index configuration (8 core indexes):
         1. corpus_id + year - Composite UNIQUE constraint (required for UPSERT)
         2. paper_id - Semantic Scholar paper ID lookups
-        3. title - Normalized title lookups (exact match)
+        3. title_key - Normalized title lookups (exact match on cleaned title)
         4. conference_normalized - Conference filtering
         5. year - Partition key
         6. dblp_id - DBLP identifier lookups (partial index)
         7. authors (GIN) - Author JSONB queries
+
+        Note: title (original) is kept for display, title_key (normalized) is for searching
         """
         return [
             "CREATE UNIQUE INDEX IF NOT EXISTS idx_dataset_papers_corpus_id_year ON dataset_papers(corpus_id, year);",
             "CREATE INDEX IF NOT EXISTS idx_dataset_papers_paper_id ON dataset_papers(paper_id);",
-            "CREATE INDEX IF NOT EXISTS idx_dataset_papers_title ON dataset_papers(title);",
+            "CREATE INDEX IF NOT EXISTS idx_dataset_papers_title_key ON dataset_papers(title_key);",
             "CREATE INDEX IF NOT EXISTS idx_dataset_papers_conference ON dataset_papers(conference_normalized);",
             "CREATE INDEX IF NOT EXISTS idx_dataset_papers_year ON dataset_papers(year);",
             "CREATE INDEX IF NOT EXISTS idx_dataset_papers_dblp_id ON dataset_papers(dblp_id) WHERE dblp_id IS NOT NULL;",
@@ -128,7 +130,7 @@ class DatasetPaperSchema:
         Drop non-essential indexes on dataset_papers table for bulk import performance
 
         IMPORTANT: Keeps composite UNIQUE constraint (corpus_id, year) for ON CONFLICT to work!
-        Only drops the 6 secondary indexes that slow down inserts.
+        Only drops the 7 secondary indexes that slow down inserts.
 
         WARNING: This will make queries very slow until indexes are recreated!
         """
@@ -136,11 +138,11 @@ class DatasetPaperSchema:
             self.logger.info("Dropping non-essential indexes on dataset_papers table for bulk import...")
             self.logger.info("⚠️  Keeping UNIQUE constraint on (corpus_id, year) - required for ON CONFLICT")
 
-            # Drop only 6 secondary indexes (NOT the unique constraint!)
+            # Drop only 7 secondary indexes (NOT the unique constraint!)
             # Keep idx_dataset_papers_corpus_id_year because ON CONFLICT needs it
             drop_statements = [
                 "DROP INDEX IF EXISTS idx_dataset_papers_paper_id CASCADE;",
-                "DROP INDEX IF EXISTS idx_dataset_papers_title CASCADE;",
+                "DROP INDEX IF EXISTS idx_dataset_papers_title_key CASCADE;",
                 "DROP INDEX IF EXISTS idx_dataset_papers_conference CASCADE;",
                 "DROP INDEX IF EXISTS idx_dataset_papers_year CASCADE;",
                 "DROP INDEX IF EXISTS idx_dataset_papers_dblp_id CASCADE;",
@@ -166,22 +168,22 @@ class DatasetPaperSchema:
 
     def recreate_indexes(self) -> bool:
         """
-        Recreate the 6 secondary indexes on dataset_papers table after bulk import
+        Recreate the 7 secondary indexes on dataset_papers table after bulk import
 
-        Note: UNIQUE constraint on (corpus_id, year) is kept during import, so only 6 indexes need rebuilding
+        Note: UNIQUE constraint on (corpus_id, year) is kept during import, so only 7 indexes need rebuilding
 
-        Optimized index set (7 total, rebuild 6):
-        - paper_id, title, conference_normalized, year, dblp_id (B-tree, fast)
+        Optimized index set (8 total, rebuild 7):
+        - paper_id, title_key, conference_normalized, year, dblp_id (B-tree, fast)
         - authors (GIN, slower)
 
         This will take time depending on the number of records:
         - 1M records: ~2-5 minutes
         - 10M records: ~10-35 minutes
-        - 17M records: ~30-70 minutes (GIN index takes ~30 minutes, title index ~5-10 minutes)
+        - 17M records: ~30-70 minutes (GIN index takes ~30 minutes, title_key index ~5-10 minutes)
         """
         try:
             self.logger.info("Recreating secondary indexes on dataset_papers table...")
-            self.logger.info("Creating 6 indexes (paper_id, title, conference, year, dblp_id, authors)")
+            self.logger.info("Creating 7 indexes (paper_id, title_key, conference, year, dblp_id, authors)")
             self.logger.info("Note: UNIQUE constraint on (corpus_id, year) was kept during import")
             self.logger.info("This may take 30-70 minutes for 17M records...")
 

@@ -32,6 +32,7 @@ CREATE TABLE IF NOT EXISTS dataset_papers (
     dblp_id VARCHAR(255),
     external_ids JSONB,
     title TEXT NOT NULL,
+    title_key TEXT,  -- Normalized title (lowercase, cleaned) for lookups
     abstract TEXT,
     venue TEXT,
     year INTEGER,  -- PARTITION KEY
@@ -167,12 +168,16 @@ CREATE TABLE IF NOT EXISTS dataset_papers_2031_plus PARTITION OF dataset_papers
 -- ============================================================================
 -- Create indexes on parent table (automatically propagate to all partitions)
 -- ============================================================================
--- Optimized index configuration (5 core indexes):
+-- Optimized index configuration (8 core indexes):
 -- 1. corpus_id + year - Composite UNIQUE constraint (required for UPSERT with ON CONFLICT)
--- 2. conference_normalized - Conference filtering (core functionality)
--- 3. year - Partition key (range queries)
--- 4. dblp_id - DBLP identifier lookups (partial index for non-NULL values)
--- 5. authors (GIN) - Complex author JSONB queries
+-- 2. paper_id - Semantic Scholar paper ID lookups
+-- 3. title_key - Normalized title lookups (exact match on cleaned title)
+-- 4. conference_normalized - Conference filtering (core functionality)
+-- 5. year - Partition key (range queries)
+-- 6. dblp_id - DBLP identifier lookups (partial index for non-NULL values)
+-- 7. authors (GIN) - Complex author JSONB queries
+--
+-- Note: title (original) is kept for display, title_key (normalized) is for searching
 --
 -- Removed indexes (low value, can be recreated later if needed):
 -- - venue (replaced by conference_normalized)
@@ -186,6 +191,8 @@ CREATE TABLE IF NOT EXISTS dataset_papers_2031_plus PARTITION OF dataset_papers
 CREATE UNIQUE INDEX IF NOT EXISTS idx_dataset_papers_corpus_id_year ON dataset_papers(corpus_id, year);
 
 -- Core query optimization indexes
+CREATE INDEX IF NOT EXISTS idx_dataset_papers_paper_id ON dataset_papers(paper_id);
+CREATE INDEX IF NOT EXISTS idx_dataset_papers_title_key ON dataset_papers(title_key);
 CREATE INDEX IF NOT EXISTS idx_dataset_papers_conference ON dataset_papers(conference_normalized);
 CREATE INDEX IF NOT EXISTS idx_dataset_papers_year ON dataset_papers(year);
 
