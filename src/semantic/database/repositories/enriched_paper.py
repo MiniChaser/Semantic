@@ -167,12 +167,12 @@ class EnrichedPaperRepository:
             self.logger.error(f"Failed to get enriched paper: {e}")
             return None
 
-    def query_paper_from_dataset(self, title: str, dblpKey: str,year: int) -> Optional[Dict]:
+    def query_paper_from_dataset_by_dblpkey(self, dblpKey: str,year: int) -> Optional[Dict]:
         """
-        Query paper from partitioned dataset_papers table by title and year
+        Query paper from partitioned dataset_papers table by dblpKey and year
 
         Args:
-            title: Paper title to search for
+            dblpKey: dblp paper key to search for
             year: Paper year (used for partition pruning)
 
         Returns:
@@ -184,10 +184,10 @@ class EnrichedPaperRepository:
             - Uses case-insensitive LIKE matching for better performance
         """
         try:
-            if not title or not title.strip():
+            if not dblpKey or not dblpKey.strip():
                 return None
 
-            # Normalize title for matching
+            # Normalize dblpKey for matching
             # First try exact case-insensitive match (fastest)
             sql_exact1 = """
             SELECT
@@ -212,47 +212,17 @@ class EnrichedPaperRepository:
             LIMIT 1
             """
 
-            sql_exact2 = """
-            SELECT
-                corpus_id,
-                paper_id,
-                external_ids,
-                title,
-                abstract,
-                venue,
-                year,
-                citation_count,
-                reference_count,
-                influential_citation_count,
-                authors,
-                fields_of_study,
-                publication_types,
-                is_open_access,
-                open_access_pdf
-            FROM dataset_papers
-            WHERE year = %s
-            AND title = %s
-            LIMIT 1
-            """
-
-            result = self.db.fetch_one(sql_exact1, (year, dblpKey))
+            result = self.db.fetch_one(sql_exact, (year, dblpKey))
             
-            # Check if result is empty
-            if not result:
-                  # Normalize title for matching
-                title_normalized = title.strip().rstrip('.').rstrip('?')
-                result = self.db.fetch_one(sql_exact2, (year, title_normalized))
-            
-
             if result:
                 # Exact match found - calculate similarity for logging
                 from ...services.s2_service.s2_service import S2ValidationService
                 validator = S2ValidationService()
-                similarity = validator.calculate_title_similarity(title, result['title'])
+                similarity = validator.calculate_title_similarity(dblpKey, result['title'])
 
                 result_dict = dict(result)
                 result_dict['_title_similarity'] = similarity
-                self.logger.info(f"Found dataset match (exact): {title[:50]}... (similarity: {similarity:.3f})")
+                self.logger.info(f"Found dataset match (exact): {dblpKey[:50]}... (similarity: {similarity:.3f})")
                 return result_dict
             return None
 
@@ -260,6 +230,70 @@ class EnrichedPaperRepository:
             self.logger.error(f"Failed to query paper from dataset: {e}")
             return None
 
+        def query_paper_from_dataset_by_title(self, title: str, year: int) -> Optional[Dict]:
+                """
+                Query paper from partitioned dataset_papers table by title and year
+
+                Args:
+                    title: Paper title to search for
+                    year: Paper year (used for partition pruning)
+
+                Returns:
+                    Dictionary with paper data if found, None otherwise
+
+                Note:
+                    - Queries the specific year partition for performance
+                    - Returns raw S2 data structure from dataset_papers
+                    - Uses case-insensitive LIKE matching for better performance
+                """
+                try:
+                    if not title or not title.strip():
+                        return None
+                    title_normalized = title.strip().rstrip('.').rstrip('?')
+
+                    # Normalize title for matching
+                    # First try exact case-insensitive match (fastest)
+                    sql_exact = """
+                    SELECT
+                        corpus_id,
+                        paper_id,
+                        external_ids,
+                        title,
+                        abstract,
+                        venue,
+                        year,
+                        citation_count,
+                        reference_count,
+                        influential_citation_count,
+                        authors,
+                        fields_of_study,
+                        publication_types,
+                        is_open_access,
+                        open_access_pdf
+                    FROM dataset_papers
+                    WHERE year = %s
+                    AND title = %s
+                    LIMIT 1
+                    """
+
+                    result = self.db.fetch_one(sql_exact2, (year, title_normalized))
+                 
+
+                    if result:
+                        # Exact match found - calculate similarity for logging
+                        from ...services.s2_service.s2_service import S2ValidationService
+                        validator = S2ValidationService()
+                        similarity = validator.calculate_title_similarity(title, result['title'])
+
+                        result_dict = dict(result)
+                        result_dict['_title_similarity'] = similarity
+                        self.logger.info(f"Found dataset match (exact): {title[:50]}... (similarity: {similarity:.3f})")
+                        return result_dict
+                    return None
+
+                except Exception as e:
+                    self.logger.error(f"Failed to query paper from dataset: {e}")
+                    return None
 
 
     def get_papers_needing_s2_enrichment(self, limit: int = None) -> List[Tuple[int, DBLP_Paper]]:
