@@ -213,6 +213,32 @@ class EnrichedPaperRepository:
             """
 
             result = self.db.fetch_one(sql_exact, (year, dblpKey))
+
+            if not result:
+                sql_exact2 = """
+            SELECT
+                corpus_id,
+                paper_id,
+                external_ids,
+                title,
+                abstract,
+                venue,
+                year,
+                citation_count,
+                reference_count,
+                influential_citation_count,
+                authors,
+                fields_of_study,
+                publication_types,
+                is_open_access,
+                open_access_pdf
+            FROM dataset_papers
+            WHERE 
+            dblp_id = %s
+            LIMIT 1
+            """
+
+            result = self.db.fetch_one(sql_exact2, ( dblpKey))
             
             if result:
                 # Exact match found - calculate similarity for logging
@@ -249,7 +275,7 @@ class EnrichedPaperRepository:
         try:
             if not title or not title.strip():
                 return None
-            title_normalized = title.strip().rstrip('.').rstrip('?')
+            title_normalized = title.strip().rstrip('.')
 
             # Normalize title for matching
             # First try exact case-insensitive match (fastest)
@@ -278,6 +304,30 @@ class EnrichedPaperRepository:
 
             result = self.db.fetch_one(sql_exact, (year, title_normalized))
             
+            if not result:
+                sql_exact = """
+            SELECT
+                corpus_id,
+                paper_id,
+                external_ids,
+                title,
+                abstract,
+                venue,
+                year,
+                citation_count,
+                reference_count,
+                influential_citation_count,
+                authors,
+                fields_of_study,
+                publication_types,
+                is_open_access,
+                open_access_pdf
+            FROM dataset_papers
+            WHERE  title = %s
+            LIMIT 1
+            """
+
+            result = self.db.fetch_one(sql_exact, ( title_normalized))
 
             if result:
                 # Exact match found - calculate similarity for logging
