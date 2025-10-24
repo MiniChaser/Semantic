@@ -189,7 +189,7 @@ class EnrichedPaperRepository:
 
             # Normalize title for matching
             # First try exact case-insensitive match (fastest)
-            sql_exact = """
+            sql_exact1 = """
             SELECT
                 corpus_id,
                 paper_id,
@@ -235,7 +235,7 @@ class EnrichedPaperRepository:
             LIMIT 1
             """
 
-            result = self.db.fetch_one(sql_exact, (year, dblpKey))
+            result = self.db.fetch_one(sql_exact1, (year, dblpKey))
             
             # Check if result is empty
             if not result:
@@ -259,6 +259,8 @@ class EnrichedPaperRepository:
         except Exception as e:
             self.logger.error(f"Failed to query paper from dataset: {e}")
             return None
+
+
 
     def get_papers_needing_s2_enrichment(self, limit: int = None) -> List[Tuple[int, DBLP_Paper]]:
         """Get DBLP papers that need S2 enrichment (both conditions: new/changed papers without S2 data)"""
