@@ -188,8 +188,6 @@ class EnrichedPaperRepository:
                 return None
 
             # Normalize title for matching
-            title_normalized = title.strip().rstrip('.')
-
             # First try exact case-insensitive match (fastest)
             sql_exact = """
             SELECT
@@ -214,7 +212,37 @@ class EnrichedPaperRepository:
             LIMIT 1
             """
 
+            sql_exact2 = """
+            SELECT
+                corpus_id,
+                paper_id,
+                external_ids,
+                title,
+                abstract,
+                venue,
+                year,
+                citation_count,
+                reference_count,
+                influential_citation_count,
+                authors,
+                fields_of_study,
+                publication_types,
+                is_open_access,
+                open_access_pdf
+            FROM dataset_papers
+            WHERE year = %s
+            AND title = %s
+            LIMIT 1
+            """
+
             result = self.db.fetch_one(sql_exact, (year, dblpKey))
+            
+            # Check if result is empty
+            if not result:
+                  # Normalize title for matching
+                title_normalized = title.strip().rstrip('.').rstrip('?')
+                result = self.db.fetch_one(sql_exact2, (year, title_normalized))
+            
 
             if result:
                 # Exact match found - calculate similarity for logging
