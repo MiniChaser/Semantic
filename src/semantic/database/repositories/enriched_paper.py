@@ -189,7 +189,7 @@ class EnrichedPaperRepository:
 
             # Normalize dblpKey for matching
             # First try exact case-insensitive match (fastest)
-            sql_exact1 = """
+            sql_exact = """
             SELECT
                 corpus_id,
                 paper_id,
