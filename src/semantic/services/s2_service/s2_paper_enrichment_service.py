@@ -82,7 +82,7 @@ class PaperProcessor:
                 return None
 
             # Query dataset_papers table
-            dataset_result = self.enriched_repo.query_paper_from_dataset(dblp_paper.title, year)
+            dataset_result = self.enriched_repo.query_paper_from_dataset(dblp_paper.title,dblp_paper.key, year)
 
             if dataset_result:
                 # Extract similarity score

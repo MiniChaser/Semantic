@@ -167,7 +167,7 @@ class EnrichedPaperRepository:
             self.logger.error(f"Failed to get enriched paper: {e}")
             return None
 
-    def query_paper_from_dataset(self, title: str, year: int) -> Optional[Dict]:
+    def query_paper_from_dataset(self, title: str, dblpKey: str,year: int) -> Optional[Dict]:
         """
         Query paper from partitioned dataset_papers table by title and year
 
@@ -210,11 +210,11 @@ class EnrichedPaperRepository:
                 open_access_pdf
             FROM dataset_papers
             WHERE year = %s
-            AND title = %s
+            AND dblp_id = %s
             LIMIT 1
             """
 
-            result = self.db.fetch_one(sql_exact, (year, title_normalized))
+            result = self.db.fetch_one(sql_exact, (year, dblpKey))
 
             if result:
                 # Exact match found - calculate similarity for logging
