@@ -85,21 +85,10 @@ class PaperProcessor:
             # Due to the year discrepancies between the dataset and the data indexed by DBLP, if the data cannot be found based on the DBLP year, 
             # data from adjacent years will be queried. Finally, if the data is still missing, the database from the previous year will be queried
             dataset_result = self.enriched_repo.query_paper_from_dataset_by_dblpkey(dblp_paper.key, year)
-            if not dataset_result:
-                dataset_result = self.enriched_repo.query_paper_from_dataset_by_dblpkey(dblp_paper.key, year+1)
-            if not dataset_result:
-                dataset_result = self.enriched_repo.query_paper_from_dataset_by_dblpkey(dblp_paper.key, year-1)
-            if not dataset_result:
-                dataset_result = self.enriched_repo.query_paper_from_dataset_by_dblpkey(dblp_paper.key, 0)
-
+          
             if not dataset_result:
                 dataset_result = self.enriched_repo.query_paper_from_dataset_by_title(dblp_paper.title, year)
-            if not dataset_result:
-                dataset_result = self.enriched_repo.query_paper_from_dataset_by_title(dblp_paper.title, year+1)
-            if not dataset_result:
-                dataset_result = self.enriched_repo.query_paper_from_dataset_by_title(dblp_paper.title, year-1)
-            if not dataset_result:
-                dataset_result = self.enriched_repo.query_paper_from_dataset_by_title(dblp_paper.title, 0)
+            
 
 
 
