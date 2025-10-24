@@ -276,7 +276,7 @@ class EnrichedPaperRepository:
             LIMIT 1
             """
 
-            result = self.db.fetch_one(sql_exact2, (year, title_normalized))
+            result = self.db.fetch_one(sql_exact, (year, title_normalized))
             
 
             if result:
