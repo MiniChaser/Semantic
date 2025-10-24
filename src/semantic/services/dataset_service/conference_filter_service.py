@@ -14,6 +14,7 @@ from tqdm import tqdm
 from ...database.connection import DatabaseManager, DatabaseConfig
 from ...database.repositories.dataset_release import DatasetReleaseRepository
 from .database_conference_matcher import DatabaseConferenceMatcher
+from ...utils.title_normalizer import TitleNormalizer
 
 
 class ConferenceFilterService:
@@ -28,6 +29,7 @@ class ConferenceFilterService:
         self.conference_matcher = DatabaseConferenceMatcher(db_manager)
         self.release_repo = DatasetReleaseRepository(db_manager)
         self.logger = self._setup_logger()
+        self.title_normalizer = TitleNormalizer()
 
         # Statistics
         self.total_matched = 0
@@ -163,6 +165,7 @@ class ConferenceFilterService:
 
                     # venue_normalized is already set, use it directly as conference_normalized
                     # Extract DBLP ID from external_ids JSONB
+                    # Normalize title to lowercase
                     papers_with_conf = []
                     for paper in papers:
                         paper_with_conf = dict(paper)
@@ -170,6 +173,8 @@ class ConferenceFilterService:
                         paper_with_conf['conference_normalized'] = paper.get('venue_normalized')
                         # Extract DBLP ID from external_ids
                         paper_with_conf['dblp_id'] = self._extract_dblp_id(paper.get('external_ids'))
+                        # Normalize title (convert to lowercase)
+                        paper_with_conf['title'] = self.title_normalizer.normalize(paper.get('title', ''))
                         papers_with_conf.append(paper_with_conf)
 
                     # Batch upsert papers using INSERT ON CONFLICT
@@ -389,6 +394,9 @@ class ConferenceFilterService:
         logger = logging.getLogger(f'ConferenceFilterService.Worker{worker_id}')
         logger.setLevel(logging.INFO)
 
+        # Create title normalizer for this worker
+        title_normalizer = TitleNormalizer()
+
         try:
             logger.info(f"Worker {worker_id} starting: corpus_id {start_corpus_id:,} to {end_corpus_id:,}")
 
@@ -424,7 +432,7 @@ class ConferenceFilterService:
                 # Update cursor
                 last_corpus_id = papers[-1]['corpus_id']
 
-                # Add conference_normalized field and extract DBLP ID
+                # Add conference_normalized field, extract DBLP ID, and normalize title
                 papers_with_conf = []
                 for paper in papers:
                     paper_with_conf = dict(paper)
@@ -432,6 +440,8 @@ class ConferenceFilterService:
                     # Extract DBLP ID from external_ids
                     external_ids = paper.get('external_ids')
                     paper_with_conf['dblp_id'] = external_ids.get('DBLP') if external_ids and isinstance(external_ids, dict) else None
+                    # Normalize title (convert to lowercase)
+                    paper_with_conf['title'] = title_normalizer.normalize(paper.get('title', ''))
                     papers_with_conf.append(paper_with_conf)
 
                 # Fast batch upsert using execute_values
