@@ -575,11 +575,11 @@ class S2EnrichmentService:
         """Process a single paper through the 3-tier enrichment process"""
         try:
             # Step 1: Try Tier 1 (database matching from dataset_papers)
-            enriched_paper = self._try_tier1_database_matching(dblp_paper)
+            # enriched_paper = self._try_tier1_database_matching(dblp_paper)
 
             # Step 2: If Tier 1 failed, try Tier 2 (S2 API title-based matching)
             # if not enriched_paper:
-            # enriched_paper = self._try_tier2_matching(dblp_paper)
+            enriched_paper = self._try_tier2_matching(dblp_paper)
 
             # Step 3: If Tier 2 also failed, create Tier 3 (no match)
             if not enriched_paper:
