@@ -277,7 +277,7 @@ class EnrichedPaperRepository:
             if not title or not title.strip():
                 return None
             # title_normalized = title.strip().rstrip('.')
-            title_key = self.title.normalize(title)
+            title_key = self.title_normalizer.normalize(title)
 
 
             # Normalize title for matching
