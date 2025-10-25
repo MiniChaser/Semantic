@@ -9,18 +9,19 @@ Table Structure:
 - Always creates a PARTITIONED table by year (34 partitions)
 - NULL years are automatically converted to 0 and stored in dataset_papers_0_1970 partition
 - Automatically extracts DBLP ID from external_ids JSONB field to dedicated column
-- Normalizes paper titles (removes artifacts, fixes encoding, converts to lowercase)
+- Creates normalized title_key (removes artifacts, fixes encoding, converts to lowercase) while preserving original title
 
 Performance Optimization:
-- Optimized index set: 7 core indexes (corpus_id, paper_id, title, conference, year, dblp_id, authors)
+- Optimized index set: 8 core indexes (corpus_id, paper_id, title_key, conference, year, dblp_id, authors)
 - By default, drops indexes before bulk insert and rebuilds after (5-10x faster!)
 - For 17M records: ~2-3 hours total (vs 10+ hours with indexes)
-- Index rebuild time: ~30-70 minutes (includes title and paper_id indexes)
+- Index rebuild time: ~30-70 minutes (includes title_key and paper_id indexes)
 
 Features:
 - Intelligent index management for optimal performance
 - Automatic DBLP ID extraction during import
-- Title normalization (removes PDF artifacts, fixes encoding, converts to lowercase)
+- Title normalization (removes PDF artifacts, fixes encoding, converts to lowercase) stored in title_key
+- Original title preserved for display
 - SQL-based filtering for efficiency
 - Processes ALL data in dataset_all_papers (regardless of release_id)
 - Conference matching with aliases support
@@ -240,22 +241,24 @@ Table Structure:
 - Always creates a PARTITIONED table by year (34 partitions)
 - NULL years are automatically converted to 0 and stored in dataset_papers_0_1970 partition
 - Automatically extracts DBLP ID from external_ids JSONB to dedicated column
+- Creates normalized title_key while preserving original title
 
 Performance Optimization:
-Optimized index set (7 core indexes: corpus_id, paper_id, title, conference, year, dblp_id, authors)
+Optimized index set (8 core indexes: corpus_id, paper_id, title_key, conference, year, dblp_id, authors)
 By default, this script drops indexes before bulk insert and rebuilds them after,
 resulting in 5-10x faster performance:
 - With index optimization:  ~2-3 hours for 17M records (recommended)
 - Without optimization:     ~10-11 hours for 17M records
-- Index rebuild time:       ~30-70 minutes (7 indexes including paper_id and title)
+- Index rebuild time:       ~30-70 minutes (8 indexes including paper_id and title_key)
 
 Process:
 1. Create partitioned table if not exists (34 partitions by year)
-2. Drop 6 secondary indexes from dataset_papers table (if not --keep-indexes)
+2. Drop 7 secondary indexes from dataset_papers table (if not --keep-indexes)
 3. Bulk insert conference papers from dataset_all_papers (uses venue_normalized index)
    - Automatically extracts DBLP ID from external_ids during insert
-   - Normalizes paper titles (removes artifacts, fixes encoding, converts to lowercase)
-4. Rebuild 6 indexes in one go (more efficient than per-row updates)
+   - Creates normalized title_key (removes artifacts, fixes encoding, converts to lowercase)
+   - Preserves original title for display
+4. Rebuild 7 indexes in one go (more efficient than per-row updates)
 
 IMPORTANT: This script processes ALL data in the dataset_all_papers table, regardless
 of release_id. It does not perform incremental filtering.
