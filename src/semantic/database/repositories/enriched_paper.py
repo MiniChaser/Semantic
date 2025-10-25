@@ -10,7 +10,7 @@ from typing import List, Dict, Optional, Tuple, Any
 from ..connection import DatabaseManager
 from ..models.enriched_paper import EnrichedPaper
 from ..models.paper import DBLP_Paper
-
+from ...utils.title_normalizer import TitleNormalizer
 
 class EnrichedPaperRepository:
     """Repository for enriched papers with S2 data"""
@@ -18,6 +18,8 @@ class EnrichedPaperRepository:
     def __init__(self, db_manager: DatabaseManager):
         self.db = db_manager
         self.logger = self._setup_logger()
+        self.title_normalizer = TitleNormalizer()
+
     
     def _setup_logger(self) -> logging.Logger:
         """Setup logger"""
@@ -274,7 +276,9 @@ class EnrichedPaperRepository:
         try:
             if not title or not title.strip():
                 return None
-            title_normalized = title.strip().rstrip('.')
+            # title_normalized = title.strip().rstrip('.')
+            title_key = self.title.normalize(title)
+
 
             # Normalize title for matching
             # First try exact case-insensitive match (fastest)
@@ -297,11 +301,11 @@ class EnrichedPaperRepository:
                 open_access_pdf
             FROM dataset_papers
             WHERE year = %s
-            AND title = %s
+            AND title_key = %s
             LIMIT 1
             """
 
-            result = self.db.fetch_one(sql_exact, (year, title_normalized))
+            result = self.db.fetch_one(sql_exact, (year, title_key))
             
             if not result:
                 sql_exact2 = """
@@ -322,11 +326,11 @@ class EnrichedPaperRepository:
                     is_open_access,
                     open_access_pdf
                 FROM dataset_papers
-                WHERE  title = %s
+                WHERE  title_key = %s
                 LIMIT 1
                 """
 
-                result = self.db.fetch_one(sql_exact2, ( title_normalized))
+                result = self.db.fetch_one(sql_exact2, ( title_key))
 
             if result:
                 # Exact match found - calculate similarity for logging

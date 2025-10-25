@@ -84,10 +84,7 @@ class PaperProcessor:
             # Query dataset_papers table 
             # Due to the year discrepancies between the dataset and the data indexed by DBLP, if the data cannot be found based on the DBLP year, 
             # data from adjacent years will be queried. Finally, if the data is still missing, the database from the previous year will be queried
-            dataset_result = self.enriched_repo.query_paper_from_dataset_by_dblpkey(dblp_paper.key, year)
-          
-            if not dataset_result:
-                dataset_result = self.enriched_repo.query_paper_from_dataset_by_title(dblp_paper.title, year)
+            dataset_result = self.enriched_repo.query_paper_from_dataset_by_title(dblp_paper.title, year)
             
 
 
@@ -578,11 +575,11 @@ class S2EnrichmentService:
         """Process a single paper through the 3-tier enrichment process"""
         try:
             # Step 1: Try Tier 1 (database matching from dataset_papers)
-            # enriched_paper = self._try_tier1_database_matching(dblp_paper)
+            enriched_paper = self._try_tier1_database_matching(dblp_paper)
 
             # Step 2: If Tier 1 failed, try Tier 2 (S2 API title-based matching)
             # if not enriched_paper:
-            enriched_paper = self._try_tier2_matching(dblp_paper)
+            # enriched_paper = self._try_tier2_matching(dblp_paper)
 
             # Step 3: If Tier 2 also failed, create Tier 3 (no match)
             if not enriched_paper:
