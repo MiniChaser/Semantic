@@ -17,6 +17,7 @@ Usage:
 import re
 from dataclasses import dataclass, field
 from typing import List, Optional
+import contractions
 
 
 @dataclass
@@ -25,15 +26,37 @@ class NormalizationConfig:
 
     # Common prefixes to remove (will be sorted by length, longest first)
     prefixes: List[str] = field(default_factory=lambda: [
-        "Association for Computational Linguistics.",
+       "Association for Computational Linguistics",
         "Explorer",
         "Erratum to",
         "UvA-DARE ( Digital Academic Repository )",
-        "Invited Talk:",
+        "Invited Talk",
         "Combination of",
         "40 80 11 v 1 2 2 A ug 1 99 4",
         "Edinburgh Research Explorer",
-        "Toward"
+        "Toward",
+        "Interactive Discourse"
+        "Shared task",
+        "Thesis Proposal",
+        "Supplemental Materials",
+        "Supplementary",
+        "UvA-DARE (Digital Academic Repository) ",
+        "Review of",
+        "Position Paper",
+        "MeMo",
+        "BGE",
+        "MaXM",
+        "[RE]",
+        "CLPsych 2016",
+        "CLPsych 2015",
+        "Explorer",
+        "Panel Chair’s Introduction",
+        "KGLM",
+        "KGPT",
+        "DGST",
+        "Statistical Power and",
+        "Beyond Geolocation",
+        "Position Paper"
     ])
 
 
@@ -64,6 +87,20 @@ class TitleNormalizer:
         # Pre-compile regex pattern for step 4 (performance optimization)
         self.non_alphanumeric_pattern = re.compile(r'[^a-z0-9]')
 
+    def normalize_superscript(self,text):
+        # 定义上标数字到正常数字的映射
+        superscript_map = {
+            '⁰': '0', '⁰': '0',  # U+2070
+            '¹': '1',           # U+00B9
+            '²': '2',           # U+00B2
+            '³': '3',           # U+00B3
+            '⁴': '4', '⁵': '5', '⁶': '6',
+            '⁷': '7', '⁸': '8', '⁹': '9',
+        }
+        
+        # 使用映射替换上标字符
+        result = ''.join(superscript_map.get(char, char) for char in text)
+        return result
     def normalize(self, title: str) -> str:
         """
         Normalize a paper title using strict 4-step process
@@ -94,6 +131,10 @@ class TitleNormalizer:
 
         if not title:
             return ""
+        
+        title = self.normalize_superscript(title)
+
+        title = contractions.fix(title)
 
         # Step 2: Remove prefixes (case-insensitive, longest first)
         # Build regex pattern for all prefixes
@@ -106,14 +147,14 @@ class TitleNormalizer:
 
         # Step 3: Apply colon rule (delete everything before first colon)
         # Check for English colon (:)
-        if ':' in title:
-            idx = title.find(':')
-            title = title[idx+1:].lstrip()
+        # if ':' in title:
+        #     idx = title.find(':')
+        #     title = title[idx+1:].lstrip()
 
         # Check for Chinese colon (：)
-        if '：' in title:
-            idx = title.find('：')
-            title = title[idx+1:].lstrip()
+        # if '：' in title:
+        #     idx = title.find('：')
+        #     title = title[idx+1:].lstrip()
 
         # Step 4: Remove all non-alphanumeric characters and convert to lowercase
         title = self.non_alphanumeric_pattern.sub('', title.lower())
