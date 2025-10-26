@@ -17,7 +17,6 @@ Usage:
 import re
 from dataclasses import dataclass, field
 from typing import List, Optional
-import contractions
 
 
 @dataclass
@@ -60,6 +59,41 @@ class NormalizationConfig:
     ])
 
 
+    contractions = {
+        "it's": "it is",
+        "i'm": "i am",
+        "you're": "you are",
+        "we're": "we are",
+        "they're": "they are",
+        "don't": "do not",
+        "doesn't": "does not",
+        "can't": "cannot",
+        "won't": "will not",
+        "shan't": "shall not",
+        "let's": "let us",
+        "there's": "there is",
+        "that's": "that is",
+        "what's": "what is",
+        "where's": "where is",
+        "it’s": "it is",
+        "i’m": "i am",
+        "you’re": "you are",
+        "we’re": "we are",
+        "they’re": "they are",
+        "don’t": "do not",
+        "doesn’t": "does not",
+        "can’t": "cannot",
+        "won’t": "will not",
+        "shan’t": "shall not",
+        "let’s": "let us",
+        "there’s": "there is",
+        "that’s": "that is",
+        "what’s": "what is",
+        "where’s": "where is",
+        # 可继续添加...
+    }
+    
+
 class TitleNormalizer:
     """
     Normalize paper titles using strict 4-step sequential process:
@@ -101,6 +135,37 @@ class TitleNormalizer:
         # 使用映射替换上标字符
         result = ''.join(superscript_map.get(char, char) for char in text)
         return result
+    def expand_contractions(self, text):
+        # 将文本转为小写用于匹配，但保留原始大小写信息较复杂，这里简单处理
+        words = text.split()
+        expanded_words = []
+        for word in words:
+            # 保留标点符号
+            leading_punct = ''
+            trailing_punct = ''
+            clean_word = word
+
+            # 分离前后的标点符号
+            while len(clean_word) > 0 and not clean_word[0].isalnum():
+                leading_punct += clean_word[0]
+                clean_word = clean_word[1:]
+            while len(clean_word) > 0 and not clean_word[-1].isalnum():
+                trailing_punct = clean_word[-1] + trailing_punct
+                clean_word = clean_word[:-1]
+
+            # 转换为小写进行匹配
+            key = clean_word.lower()
+            contractions = self.config.contractions
+            if key in contractions:
+                new_word = contractions[key]
+                # 如果原词首字母大写，则新词首字母也大写（如 It's -> It is）
+                if clean_word[0].isupper():
+                    new_word = new_word.capitalize()
+            else:
+                new_word = clean_word
+
+            expanded_words.append(leading_punct + new_word + trailing_punct)
+        return ' '.join(expanded_words)
     def normalize(self, title: str) -> str:
         """
         Normalize a paper title using strict 4-step process
@@ -134,7 +199,7 @@ class TitleNormalizer:
         
         title = self.normalize_superscript(title)
 
-        title = contractions.fix(title)
+        title = self.expand_contractions(title)
 
         # Step 2: Remove prefixes (case-insensitive, longest first)
         # Build regex pattern for all prefixes
