@@ -2,7 +2,7 @@
 import psycopg2
 from psycopg2.extras import RealDictCursor
 
-from ...utils.title_normalizer import TitleNormalizer
+from ..utils.title_normalizer import TitleNormalizer
 
 
 # ==================== 配置 ====================
