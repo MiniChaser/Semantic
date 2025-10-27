@@ -67,7 +67,7 @@ def get_distinct_venues(db_manager: DatabaseManager):
 
     venues = db_manager.fetch_all("""
         SELECT DISTINCT venue
-        FROM all_papers
+        FROM dataset_all_papers
         WHERE venue IS NOT NULL AND venue != ''
         ORDER BY venue
     """)
