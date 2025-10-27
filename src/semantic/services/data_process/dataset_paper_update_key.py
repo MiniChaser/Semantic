@@ -1,12 +1,9 @@
-import sys
 
 import psycopg2
 from psycopg2.extras import RealDictCursor
-from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parent.parent / 'src'))
+from ...utils.title_normalizer import TitleNormalizer
 
-from  src.semantic.utils.title_normalizer import TitleNormalizer 
 
 # ==================== 配置 ====================
 DB_CONFIG = {
