@@ -4,6 +4,7 @@ Reads conference list from database instead of GitHub API
 """
 
 import logging
+import re
 from typing import List, Dict, Optional
 
 from ...database.connection import DatabaseManager
@@ -105,7 +106,61 @@ class DatabaseConferenceMatcher:
             for alias in aliases:
                 self._alias_dict[alias.lower()] = conf
 
+        # Group conferences by length for prioritized matching (long names first)
+        self._conferences_by_length = sorted(self._conferences, key=lambda x: len(x), reverse=True)
+
         self.logger.debug(f"Built lookup dicts: {len(self._exact_match_dict)} exact, {len(self._alias_dict)} aliases")
+
+    def _is_word_boundary_match(self, pattern: str, text: str) -> bool:
+        """
+        Check if pattern exists as a complete word in text (word boundary match)
+        Uses regex to ensure pattern is not part of a larger word
+
+        Example:
+            _is_word_boundary_match("ec", "conference on ec") -> True
+            _is_word_boundary_match("ec", "technology") -> False
+        """
+        # Escape special regex characters in pattern
+        escaped_pattern = re.escape(pattern.lower())
+        # Use word boundary markers \b
+        regex = r'\b' + escaped_pattern + r'\b'
+        return re.search(regex, text.lower()) is not None
+
+    def _has_conference_context(self, venue: str) -> bool:
+        """
+        Check if venue string contains conference-related keywords
+        Used to validate short code matches
+        """
+        venue_lower = venue.lower()
+        conference_keywords = [
+            'proceedings', 'conference', 'symposium', 'workshop',
+            'acm', 'ieee', 'international', 'proc.', 'proc '
+        ]
+        return any(keyword in venue_lower for keyword in conference_keywords)
+
+    def _has_year_pattern(self, venue: str, conf_code: str) -> bool:
+        """
+        Check if venue contains conference code followed by year pattern
+        Examples: "EC 2024", "CHI'23", "EC '23"
+        """
+        venue_lower = venue.lower()
+        conf_lower = conf_code.lower()
+
+        # Pattern: conference code followed by optional separator and 2-4 digit year
+        patterns = [
+            rf'\b{re.escape(conf_lower)}\s+[12]\d{{3}}\b',  # "EC 2024"
+            rf'\b{re.escape(conf_lower)}\s*[\'`]\s*\d{{2}}\b',  # "EC'23" or "EC '23"
+            rf'\b{re.escape(conf_lower)}\s*-\s*[12]\d{{3}}\b',  # "EC-2024"
+        ]
+
+        return any(re.search(pattern, venue_lower) for pattern in patterns)
+
+    def _is_short_code(self, conf_name: str) -> bool:
+        """
+        Check if conference code is short (<=3 characters)
+        Short codes require stricter matching rules
+        """
+        return len(conf_name) <= 3
 
     def _normalize_venue(self, venue: str) -> str:
         """Normalize venue string for matching"""
@@ -121,16 +176,22 @@ class DatabaseConferenceMatcher:
 
     def match_conference(self, venue: str) -> Optional[str]:
         """
-        Match venue string to a standard conference name (OPTIMIZED)
+        Match venue string to a standard conference name (IMPROVED WITH WORD BOUNDARIES)
         Returns the standard conference name if matched, None otherwise
 
-        Matching strategy:
-        1. Exact match O(1) - dict lookup
-        2. Containment match O(n) - check if any conf name in venue
-        3. Alias match O(1) per alias - dict lookup
-        4. Normalized match O(n) - fallback
+        Matching strategy (prioritized):
+        1. Exact match - O(1) dict lookup
+        2. Alias match - O(1) per alias, checks word boundaries for short aliases
+        3. Conference name match - sorted by length (longest first), with word boundary checks for short codes
+        4. Normalized match - fallback with same rules
 
-        Performance: Most matches resolve in O(1) or O(n) where n = number of conferences
+        Short codes (<=3 chars) require:
+        - Word boundary match (not substring)
+        - AND (conference context OR year pattern)
+
+        Long names (>=4 chars) use simple substring matching
+
+        Performance: O(1) for exact, O(n) for containment where n = 66 conferences
         """
         if not venue or not isinstance(venue, str):
             return None
@@ -141,23 +202,56 @@ class DatabaseConferenceMatcher:
         if venue_lower in self._exact_match_dict:
             return self._exact_match_dict[venue_lower]
 
-        # Strategy 2: Containment match - O(n) but n is small (66 conferences)
-        # Check if venue contains any conference name
-        for conf_lower in self._conf_lowercase_set:
-            if conf_lower in venue_lower:
-                return self._exact_match_dict[conf_lower]
+        # Strategy 2: Alias match with improved logic
+        # Process aliases by length (longest first) to avoid short code false positives
+        sorted_aliases = sorted(self._alias_dict.items(), key=lambda x: len(x[0]), reverse=True)
 
-        # Strategy 3: Alias match - O(1) per alias check
-        # Check if venue contains any alias
-        for alias_lower, conf in self._alias_dict.items():
-            if alias_lower in venue_lower:
-                return conf
+        for alias_lower, conf in sorted_aliases:
+            # For short aliases (<=3 chars), require word boundary + context
+            if len(alias_lower) <= 3:
+                if self._is_word_boundary_match(alias_lower, venue_lower):
+                    # Require conference context or year pattern
+                    if self._has_conference_context(venue) or self._has_year_pattern(venue, alias_lower):
+                        return conf
+            else:
+                # For long aliases, simple substring match is safe
+                if alias_lower in venue_lower:
+                    return conf
 
-        # Strategy 4: Normalized match - O(n) fallback
+        # Strategy 3: Conference name match - sorted by length (longest first)
+        for conf in self._conferences_by_length:
+            conf_lower = conf.lower()
+
+            # Short codes require strict matching
+            if self._is_short_code(conf):
+                # Must have word boundary
+                if not self._is_word_boundary_match(conf_lower, venue_lower):
+                    continue
+
+                # Must have conference context OR year pattern
+                if self._has_conference_context(venue) or self._has_year_pattern(venue, conf):
+                    return conf
+            else:
+                # Long names use simple substring matching
+                if conf_lower in venue_lower:
+                    return conf
+
+        # Strategy 4: Normalized match - same rules as above
         venue_normalized = self._normalize_venue(venue)
-        for conf_lower in self._conf_lowercase_set:
-            if conf_lower in venue_normalized:
-                return self._exact_match_dict[conf_lower]
+        if venue_normalized and venue_normalized != venue_lower:
+            for conf in self._conferences_by_length:
+                conf_lower = conf.lower()
+
+                if self._is_short_code(conf):
+                    if not self._is_word_boundary_match(conf_lower, venue_normalized):
+                        continue
+                    # For normalized venue, we can be slightly less strict
+                    # (normalization already removes noise)
+                    if self._has_conference_context(venue):
+                        return conf
+                else:
+                    if conf_lower in venue_normalized:
+                        return conf
 
         return None
 
