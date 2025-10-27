@@ -5,7 +5,7 @@ import os
 
 # ================ 配置数据库连接 ===================
 DB_CONFIG = {
-    'host': '114.132.124.54',
+    'host': '127.0.0.1',
     'port': 5432,
     'dbname': 'atip_db',
     'user': 'chenchao',
