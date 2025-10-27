@@ -1,6 +1,6 @@
 import psycopg2
 from psycopg2.extras import RealDictCursor
-from  semantic.utils.title_normalizer import TitleNormalizer 
+from  src.semantic.utils.title_normalizer import TitleNormalizer 
 
 # ==================== 配置 ====================
 DB_CONFIG = {
