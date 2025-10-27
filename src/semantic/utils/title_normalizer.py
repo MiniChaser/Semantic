@@ -25,37 +25,12 @@ class NormalizationConfig:
 
     # Common prefixes to remove (will be sorted by length, longest first)
     prefixes: List[str] = field(default_factory=lambda: [
-       "Association for Computational Linguistics",
-        "Explorer",
+        "Association for Computational Linguistics.",
         "Erratum to",
         "UvA-DARE ( Digital Academic Repository )",
-        "Invited Talk",
-        "Combination of",
         "40 80 11 v 1 2 2 A ug 1 99 4",
         "Edinburgh Research Explorer",
-        "Toward",
-        "Interactive Discourse"
-        "Shared task",
-        "Thesis Proposal",
-        "Supplemental Materials",
-        "Supplementary",
         "UvA-DARE (Digital Academic Repository) ",
-        "Review of",
-        "Position Paper",
-        "MeMo",
-        "BGE",
-        "MaXM",
-        "[RE]",
-        "CLPsych 2016",
-        "CLPsych 2015",
-        "Explorer",
-        "Panel Chair’s Introduction",
-        "KGLM",
-        "KGPT",
-        "DGST",
-        "Statistical Power and",
-        "Beyond Geolocation",
-        "Position Paper"
     ])
 
 
@@ -197,11 +172,28 @@ class TitleNormalizer:
         if not title:
             return ""
         
+        
+        # Step 2: Apply colon rule (delete everything before first colon)
+        # Check for English colon (:)
+        if ':' in title:
+            idx = title.find(':')
+            title = title[idx+1:].lstrip()
+
+        # Check for Chinese colon (：)
+        if '：' in title:
+            idx = title.find('：')
+            title = title[idx+1:].lstrip()
+
+
+        
+        
+        # 处理上标数字
         title = self.normalize_superscript(title)
 
+        # 处理缩写
         title = self.expand_contractions(title)
 
-        # Step 2: Remove prefixes (case-insensitive, longest first)
+        # Step 3: Remove prefixes (case-insensitive, longest first)
         # Build regex pattern for all prefixes
         pattern = '^(' + '|'.join(re.escape(p) for p in self.prefixes_sorted) + ')'
         match = re.match(pattern, title, re.IGNORECASE)
@@ -210,16 +202,6 @@ class TitleNormalizer:
             # Remove matched prefix
             title = title[len(match.group(0)):].lstrip()
 
-        # Step 3: Apply colon rule (delete everything before first colon)
-        # Check for English colon (:)
-        # if ':' in title:
-        #     idx = title.find(':')
-        #     title = title[idx+1:].lstrip()
-
-        # Check for Chinese colon (：)
-        # if '：' in title:
-        #     idx = title.find('：')
-        #     title = title[idx+1:].lstrip()
 
         # Step 4: Remove all non-alphanumeric characters and convert to lowercase
         title = self.non_alphanumeric_pattern.sub('', title.lower())
