@@ -247,7 +247,10 @@ def main():
         print("="*80)
         print(f"Total time: {overall_elapsed/60:.1f} minutes")
         print("\nNext step:")
-        print("  uv run python scripts/populate_venue_normalized.py")
+        print("  uv run python scripts/import_papers_stage1_all.py --data-dir /path/to/data")
+        print("\nNote:")
+        print("  venue_normalized will be computed automatically during import")
+        print("  (no separate populate step needed)")
         print("="*80)
 
         return 0
