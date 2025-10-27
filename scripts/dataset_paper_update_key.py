@@ -4,8 +4,7 @@ import psycopg2
 from psycopg2.extras import RealDictCursor
 from pathlib import Path
 
-roject_root = Path(__file__).parent.parent
-sys.path.insert(0, str(project_root))
+sys.path.insert(0, str(Path(__file__).parent.parent / 'src'))
 
 from  src.semantic.utils.title_normalizer import TitleNormalizer 
 
