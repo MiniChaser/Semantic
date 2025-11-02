@@ -1,13 +1,15 @@
 #!/usr/bin/env python3
 """
-Full Import Pipeline: Execute Stage 1 and Stage 2 sequentially
+Full Import Pipeline: Execute Stage 0, Stage 1 and Stage 2 sequentially
 
 This script orchestrates a complete import pipeline from scratch:
+0. Stage 0: Build venue mapping table with semantic similarity matching
 1. Stage 1: Download and import ALL papers from S2 dataset to dataset_all_papers
 2. Stage 2: Filter conference papers to dataset_papers table
 
 Features:
-- Automatic sequential execution of both stages
+- Automatic sequential execution of all stages
+- Semantic venue matching using Sentence Transformers
 - Downloads fresh data from Semantic Scholar
 - Clears existing data and starts from scratch
 - Comprehensive error handling
@@ -26,6 +28,9 @@ Usage:
 
   # Skip stage 2 index rebuild (faster, but requires manual rebuild)
   uv run python scripts/full_import_pipeline.py --data-dir downloads/ --skip-stage2-rebuild
+
+  # Custom similarity threshold for venue matching
+  uv run python scripts/full_import_pipeline.py --data-dir downloads/ --similarity-threshold 0.80
 """
 
 import argparse
@@ -43,11 +48,70 @@ class FullImportPipeline:
     def __init__(self, args):
         self.args = args
         self.project_root = Path(__file__).parent.parent
+        self.stage0_script = self.project_root / "scripts" / "build_venue_mapping.py"
         self.stage1_script = self.project_root / "scripts" / "import_papers_stage1_all.py"
         self.stage2_script = self.project_root / "scripts" / "import_papers_stage2_conferences.py"
         self.start_time = None
+        self.stage0_time = None
         self.stage1_time = None
         self.stage2_time = None
+
+    def run_stage0(self) -> bool:
+        """
+        Execute Stage 0: Build venue mapping table
+        """
+        print("\n" + "="*80)
+        print("STAGE 0: Build Venue Mapping Table (Semantic Similarity)")
+        print("="*80)
+        print(f"Started at: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        print(f"Model: all-MiniLM-L6-v2 (80MB)")
+        print(f"Similarity threshold: {self.args.similarity_threshold}")
+        print()
+
+        # Build command for stage 0
+        cmd = [
+            "uv", "run", "python",
+            str(self.stage0_script),
+            "--rebuild",
+        ]
+
+        # Add venue mapping options
+        if self.args.similarity_threshold:
+            cmd.extend(["--similarity-threshold", str(self.args.similarity_threshold)])
+
+        if self.args.venue_batch_size:
+            cmd.extend(["--batch-size", str(self.args.venue_batch_size)])
+
+        print(f"Executing: {' '.join(cmd)}\n")
+
+        stage0_start = datetime.now()
+
+        try:
+            result = subprocess.run(cmd, check=True)
+            self.stage0_time = (datetime.now() - stage0_start).total_seconds()
+
+            print("\n" + "="*80)
+            print("✅ STAGE 0 COMPLETED SUCCESSFULLY")
+            print("="*80)
+            print(f"Stage 0 time: {self.stage0_time:.2f}s ({self.stage0_time/60:.2f} minutes)")
+
+            return True
+
+        except subprocess.CalledProcessError as e:
+            self.stage0_time = (datetime.now() - stage0_start).total_seconds()
+            print("\n" + "="*80)
+            print("❌ STAGE 0 FAILED")
+            print("="*80)
+            print(f"Error code: {e.returncode}")
+            print(f"Stage 0 time: {self.stage0_time:.2f}s ({self.stage0_time/60:.2f} minutes)")
+            return False
+
+        except KeyboardInterrupt:
+            self.stage0_time = (datetime.now() - stage0_start).total_seconds()
+            print("\n\n" + "="*80)
+            print("⚠️  STAGE 0 INTERRUPTED BY USER")
+            print("="*80)
+            raise
 
     def run_stage1(self) -> bool:
         """
@@ -192,6 +256,11 @@ class FullImportPipeline:
 
         print()
 
+        if self.stage0_time:
+            print(f"Stage 0 time: {self.stage0_time:.2f}s ({self.stage0_time/60:.2f} min, {self.stage0_time/3600:.2f} hours)")
+        else:
+            print("Stage 0 time: Not completed")
+
         if self.stage1_time:
             print(f"Stage 1 time: {self.stage1_time:.2f}s ({self.stage1_time/60:.2f} min, {self.stage1_time/3600:.2f} hours)")
         else:
@@ -209,8 +278,9 @@ class FullImportPipeline:
         if success:
             print("\n🎉 Full import pipeline completed successfully!")
             print("\nNext steps:")
+            print("  - Verify venue mapping: SELECT COUNT(*) FROM venue_mapping;")
             print("  - Verify data: SELECT COUNT(*) FROM dataset_papers;")
-            print("  - Check conferences: SELECT conference, COUNT(*) FROM dataset_papers GROUP BY conference;")
+            print("  - Check conferences: SELECT conference_normalized, COUNT(*) FROM dataset_papers GROUP BY conference_normalized;")
         else:
             print("\n⚠️  Pipeline failed. Check error messages above for details.")
 
@@ -226,20 +296,26 @@ class FullImportPipeline:
         print(f"Started at: {self.start_time.strftime('%Y-%m-%d %H:%M:%S')}")
         print()
         print("This pipeline will:")
+        print("  0. Build venue mapping table with semantic similarity (EnhancedConferenceMatcher)")
         print("  1. Download fresh S2 dataset (if not using --process-only)")
         print("  2. Clear and reimport ALL papers to dataset_all_papers")
         print("  3. Filter and populate conference papers to dataset_papers")
         print()
-        print("⚠️  WARNING: This will DELETE existing data in both tables!")
+        print("⚠️  WARNING: This will DELETE existing data in all tables!")
         print("="*80)
 
         try:
-            # Execute Stage 1
+            # Execute Stage 0: Build venue mapping
+            if not self.run_stage0():
+                self.print_summary(success=False)
+                return 1
+
+            # Execute Stage 1: Import all papers
             if not self.run_stage1():
                 self.print_summary(success=False)
                 return 1
 
-            # Execute Stage 2
+            # Execute Stage 2: Filter conference papers
             if not self.run_stage2():
                 self.print_summary(success=False)
                 return 1
@@ -266,19 +342,21 @@ def main():
     Main entry point
     """
     parser = argparse.ArgumentParser(
-        description='Full Import Pipeline: Execute Stage 1 and Stage 2 sequentially',
+        description='Full Import Pipeline: Execute Stage 0, Stage 1 and Stage 2 sequentially',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Full Import Pipeline: Complete Data Import from Scratch
 
 This script orchestrates a complete import pipeline that:
+0. Builds venue mapping table with semantic similarity matching
 1. Downloads fresh data from Semantic Scholar
 2. Imports ALL papers (200M records) to dataset_all_papers
 3. Filters conference papers to dataset_papers
 
-⚠️  WARNING: This will DELETE all existing data in both tables!
+⚠️  WARNING: This will DELETE all existing data in all tables!
 
 Total Expected Time:
+- Stage 0 (build venue mapping): 5-15 minutes
 - Stage 1 (download + import all papers): 3-4 hours
 - Stage 2 (filter conferences): 2-3 hours
 - Total: ~5-7 hours
@@ -293,6 +371,9 @@ Examples:
   # Custom worker count (2-4 recommended)
   %(prog)s --data-dir downloads/ --max-workers 4
 
+  # Custom similarity threshold for venue matching (stricter)
+  %(prog)s --data-dir downloads/ --similarity-threshold 0.80
+
   # Skip Stage 2 index rebuild (saves 30-70 minutes, but requires manual rebuild)
   %(prog)s --data-dir downloads/ --skip-stage2-rebuild
 
@@ -306,6 +387,22 @@ Examples:
         '--data-dir',
         required=True,
         help='Data directory for downloaded files (e.g., downloads/)'
+    )
+
+    # Stage 0 options
+    stage0_group = parser.add_argument_group('Stage 0 Options (Venue Mapping)')
+
+    stage0_group.add_argument(
+        '--similarity-threshold',
+        type=float,
+        default=0.75,
+        help='Similarity threshold for semantic matching (0.0-1.0, default: 0.75)'
+    )
+
+    stage0_group.add_argument(
+        '--venue-batch-size',
+        type=int,
+        help='Batch size for venue mapping processing (default: 10000)'
     )
 
     # Stage 1 options
@@ -371,6 +468,10 @@ Examples:
     args = parser.parse_args()
 
     # Validate arguments
+    if args.similarity_threshold < 0.0 or args.similarity_threshold > 1.0:
+        print("Error: --similarity-threshold must be between 0.0 and 1.0")
+        return 1
+
     if args.conservative and args.max_workers:
         print("Error: Cannot specify both --conservative and --max-workers")
         return 1

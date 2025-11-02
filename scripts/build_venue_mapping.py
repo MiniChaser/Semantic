@@ -22,7 +22,7 @@ project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
 from src.semantic.database.connection import DatabaseManager
-from src.semantic.services.dataset_service.database_conference_matcher import DatabaseConferenceMatcher
+from src.semantic.services.dataset_service.enhanced_conference_matcher import EnhancedConferenceMatcher
 
 
 def create_table(db_manager: DatabaseManager, rebuild: bool = False):
@@ -83,25 +83,35 @@ def get_distinct_venues(db_manager: DatabaseManager):
     return [v['venue'] for v in venues]
 
 
-def build_mappings(db_manager: DatabaseManager, venues: list, batch_size: int = 10000):
+def build_mappings(db_manager: DatabaseManager, venues: list, batch_size: int = 10000, similarity_threshold: float = 0.75):
     """Match venues to conferences and insert into mapping table"""
     print("="*80)
-    print("Building Venue Mappings")
+    print("Building Venue Mappings (with Semantic Similarity)")
     print("="*80)
 
-    # Initialize matcher
-    print("\nInitializing DatabaseConferenceMatcher...")
+    # Initialize enhanced matcher
+    print("\nInitializing EnhancedConferenceMatcher...")
+    print(f"  - Model: all-MiniLM-L6-v2 (80MB)")
+    print(f"  - Similarity threshold: {similarity_threshold}")
     try:
-        matcher = DatabaseConferenceMatcher(db_manager)
+        matcher = EnhancedConferenceMatcher(
+            db_manager,
+            model_name='all-MiniLM-L6-v2',
+            similarity_threshold=similarity_threshold
+        )
         conf_count = matcher.get_conference_count()
-        print(f"✓ Loaded {conf_count} conferences\n")
+        print(f"✓ Loaded {conf_count} conferences with embeddings\n")
     except Exception as e:
         print(f"✗ Error initializing matcher: {e}")
+        import traceback
+        traceback.print_exc()
         return 0
 
     total_venues = len(venues)
     matched_count = 0
     unmatched_count = 0
+    exact_matches = 0
+    semantic_matches = 0
 
     print(f"Processing {total_venues:,} venues in batches of {batch_size:,}...\n")
 
@@ -110,12 +120,18 @@ def build_mappings(db_manager: DatabaseManager, venues: list, batch_size: int = 
             batch = venues[i:i+batch_size]
             mappings = []
 
-            # Match each venue in batch
+            # Match each venue in batch with confidence
             for venue in batch:
-                conf = matcher.match_conference(venue)
-                if conf:
-                    mappings.append((venue, conf, 'python', 1.0))
+                result = matcher.match_conference_with_confidence(venue)
+                if result:
+                    conf, confidence, method = result
+                    mappings.append((venue, conf, method, confidence))
                     matched_count += 1
+
+                    if method == 'exact':
+                        exact_matches += 1
+                    else:
+                        semantic_matches += 1
                 else:
                     unmatched_count += 1
 
@@ -137,6 +153,8 @@ def build_mappings(db_manager: DatabaseManager, venues: list, batch_size: int = 
 
     print(f"\n✓ Mapping complete!")
     print(f"  Matched: {matched_count:,} ({matched_count/total_venues*100:.1f}%)")
+    print(f"    - Exact matches: {exact_matches:,} ({exact_matches/total_venues*100:.1f}%)")
+    print(f"    - Semantic matches: {semantic_matches:,} ({semantic_matches/total_venues*100:.1f}%)")
     print(f"  Unmatched: {unmatched_count:,} ({unmatched_count/total_venues*100:.1f}%)")
 
     return matched_count
@@ -199,6 +217,8 @@ def main():
                        help='Batch size for processing (default: 10000)')
     parser.add_argument('--skip-build', action='store_true',
                        help='Skip building, only show statistics')
+    parser.add_argument('--similarity-threshold', type=float, default=0.75,
+                       help='Similarity threshold for semantic matching (0.0-1.0, default: 0.75)')
 
     args = parser.parse_args()
 
@@ -231,7 +251,7 @@ def main():
                 return 1
 
             # Step 3: Build mappings
-            matched_count = build_mappings(db, venues, args.batch_size)
+            matched_count = build_mappings(db, venues, args.batch_size, args.similarity_threshold)
 
             if matched_count == 0:
                 print("✗ No mappings created")

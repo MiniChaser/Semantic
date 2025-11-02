@@ -22,10 +22,12 @@ class DatabaseConferenceMatcher:
 
         # Cache data in memory after first load
         self._conferences = None
+        self._full_names = None
         self._aliases = None
         self._exact_match_dict = None
         self._conf_lowercase_set = None
         self._alias_dict = None
+        self._full_name_dict = None
 
         # Load from database
         self._load_from_database()
@@ -48,14 +50,16 @@ class DatabaseConferenceMatcher:
     def _load_from_database(self) -> None:
         """Load conference list and aliases from database"""
         try:
-            # Load active conferences
+            # Load active conferences with full names
             results = self.db_manager.fetch_all("""
-                SELECT conference_name
+                SELECT conference_name, full_name
                 FROM conferences
                 WHERE is_active = TRUE
                 ORDER BY conference_name
             """)
             self._conferences = [r['conference_name'] for r in results]
+            self._full_names = {r['conference_name']: r['full_name']
+                               for r in results if r['full_name']}
 
             # Load aliases
             results = self.db_manager.fetch_all("""
@@ -76,7 +80,9 @@ class DatabaseConferenceMatcher:
                         self._aliases[conf] = []
                     self._aliases[conf].append(alias)
 
-            self.logger.info(f"Loaded {len(self._conferences)} conferences with {len(results)} aliases from database")
+            self.logger.info(f"Loaded {len(self._conferences)} conferences "
+                           f"({len(self._full_names)} with full names) "
+                           f"with {len(results)} aliases from database")
 
             # Build lookup dictionaries for O(1) matching
             self._build_lookup_dicts()
@@ -85,6 +91,7 @@ class DatabaseConferenceMatcher:
             self.logger.error(f"Failed to load conferences from database: {e}")
             # Fallback to empty lists
             self._conferences = []
+            self._full_names = {}
             self._aliases = {}
             self._build_lookup_dicts()
 
@@ -106,10 +113,26 @@ class DatabaseConferenceMatcher:
             for alias in aliases:
                 self._alias_dict[alias.lower()] = conf
 
+        # Full name match: lowercase full name -> conference code
+        # This is the PRIMARY matching strategy - match full names first
+        self._full_name_dict = {}
+        self._full_names_by_length = []
+
+        for conf_code, full_name in self._full_names.items():
+            if full_name:
+                full_name_lower = full_name.lower()
+                self._full_name_dict[full_name_lower] = conf_code
+                self._full_names_by_length.append((full_name, conf_code))
+
+        # Sort full names by length (longest first) for better matching
+        self._full_names_by_length.sort(key=lambda x: len(x[0]), reverse=True)
+
         # Group conferences by length for prioritized matching (long names first)
         self._conferences_by_length = sorted(self._conferences, key=lambda x: len(x), reverse=True)
 
-        self.logger.debug(f"Built lookup dicts: {len(self._exact_match_dict)} exact, {len(self._alias_dict)} aliases")
+        self.logger.debug(f"Built lookup dicts: {len(self._exact_match_dict)} exact, "
+                         f"{len(self._full_name_dict)} full names, "
+                         f"{len(self._alias_dict)} aliases")
 
     def _is_word_boundary_match(self, pattern: str, text: str) -> bool:
         """
@@ -176,14 +199,16 @@ class DatabaseConferenceMatcher:
 
     def match_conference(self, venue: str) -> Optional[str]:
         """
-        Match venue string to a standard conference name (IMPROVED WITH WORD BOUNDARIES)
+        Match venue string to a standard conference name using full names first
         Returns the standard conference name if matched, None otherwise
 
         Matching strategy (prioritized):
-        1. Exact match - O(1) dict lookup
-        2. Alias match - O(1) per alias, checks word boundaries for short aliases
-        3. Conference name match - sorted by length (longest first), with word boundary checks for short codes
-        4. Normalized match - fallback with same rules
+        0. Full name exact match - O(1) dict lookup (NEW - HIGHEST PRIORITY)
+        1. Full name substring match - check if venue contains full conference name
+        2. Exact match - O(1) dict lookup
+        3. Alias match - O(1) per alias, checks word boundaries for short aliases
+        4. Conference name match - sorted by length (longest first), with word boundary checks for short codes
+        5. Normalized match - fallback with same rules
 
         Short codes (<=3 chars) require:
         - Word boundary match (not substring)
@@ -191,18 +216,31 @@ class DatabaseConferenceMatcher:
 
         Long names (>=4 chars) use simple substring matching
 
-        Performance: O(1) for exact, O(n) for containment where n = 66 conferences
+        Performance: O(1) for exact, O(n) for containment where n = conferences with full names
         """
         if not venue or not isinstance(venue, str):
             return None
 
         venue_lower = venue.lower().strip()
 
-        # Strategy 1: Exact match - O(1)
+        # Strategy 0: Full name exact match - O(1) (HIGHEST PRIORITY)
+        if venue_lower in self._full_name_dict:
+            return self._full_name_dict[venue_lower]
+
+        # Strategy 1: Full name substring match - check if venue contains full conference name
+        # Process longest full names first to avoid short name false positives
+        for full_name, conf_code in self._full_names_by_length:
+            full_name_lower = full_name.lower()
+
+            # Check if venue contains the full conference name
+            if full_name_lower in venue_lower:
+                return conf_code
+
+        # Strategy 2: Exact match - O(1)
         if venue_lower in self._exact_match_dict:
             return self._exact_match_dict[venue_lower]
 
-        # Strategy 2: Alias match with improved logic
+        # Strategy 3: Alias match with improved logic
         # Process aliases by length (longest first) to avoid short code false positives
         sorted_aliases = sorted(self._alias_dict.items(), key=lambda x: len(x[0]), reverse=True)
 
@@ -218,7 +256,7 @@ class DatabaseConferenceMatcher:
                 if alias_lower in venue_lower:
                     return conf
 
-        # Strategy 3: Conference name match - sorted by length (longest first)
+        # Strategy 4: Conference name match - sorted by length (longest first)
         for conf in self._conferences_by_length:
             conf_lower = conf.lower()
 
@@ -236,9 +274,16 @@ class DatabaseConferenceMatcher:
                 if conf_lower in venue_lower:
                     return conf
 
-        # Strategy 4: Normalized match - same rules as above
+        # Strategy 5: Normalized match - try full names and conference codes again
         venue_normalized = self._normalize_venue(venue)
         if venue_normalized and venue_normalized != venue_lower:
+            # Try full names first on normalized venue
+            for full_name, conf_code in self._full_names_by_length:
+                full_name_lower = full_name.lower()
+                if full_name_lower in venue_normalized:
+                    return conf_code
+
+            # Then try conference codes
             for conf in self._conferences_by_length:
                 conf_lower = conf.lower()
 
